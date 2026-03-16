@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import '../../common.dart';
 import '../../common/widgets/dialog.dart';
 import '../../consts.dart';
+import 'xml_render_settings.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
 import 'home_page.dart';
@@ -486,6 +487,9 @@ class _PermissionCheckerState extends State<PermissionChecker> {
               serverModel.toggleService),
           // ── Capture method selector — всегда виден ──
           _buildCaptureMethodSelector(context),
+          // ── Кнопка настроек XML (только когда XML активен) ──
+          if (serverModel.captureMethod == 'xml')
+            _buildXmlSettingsButton(context),
           PermissionRow(translate("Input Control"), serverModel.inputOk,
               serverModel.toggleInput),
           PermissionRow(translate("Transfer file"), serverModel.fileOk,
@@ -504,6 +508,28 @@ class _PermissionCheckerState extends State<PermissionChecker> {
           PermissionRow(translate("Enable clipboard"), serverModel.clipboardOk,
               serverModel.toggleClipboard),
         ]));
+  }
+
+  Widget _buildXmlSettingsButton(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 4, top: 2),
+      child: OutlinedButton.icon(
+        icon: const Icon(Icons.tune, size: 16),
+        label: Text(
+          translate('XML Render Settings'),
+          style: const TextStyle(fontSize: 12),
+        ),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          side: BorderSide(color: theme.colorScheme.primary.withOpacity(0.5)),
+          foregroundColor: theme.colorScheme.primary,
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        onPressed: () => showXmlRenderSettings(context),
+      ),
+    );
   }
 
   Widget _buildCaptureMethodSelector(BuildContext context) {

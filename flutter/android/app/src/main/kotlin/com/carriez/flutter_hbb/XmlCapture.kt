@@ -26,7 +26,13 @@ object XmlCapture {
 
     private const val TAG = "XmlCapture"
     private const val TARGET_FPS = 15
-    private val FRAME_INTERVAL_MS = 1000L / TARGET_FPS
+    @Volatile private var frameIntervalMs = 1000L / TARGET_FPS
+
+    /** Применить новый конфиг на лету — вызывается из XmlRenderConfigManager */
+    fun applyConfig(config: XmlRenderConfig) {
+        frameIntervalMs = 1000L / config.frameRate.toLong()
+        android.util.Log.d(TAG, "config applied: fps=${config.frameRate} scheme=${config.colorScheme}")
+    }
 
     private val isRunning = AtomicBoolean(false)
     private var captureThread: HandlerThread? = null
@@ -84,7 +90,7 @@ object XmlCapture {
         captureHandler?.postDelayed({
             captureFrame(service)
             scheduleNextFrame(service)
-        }, FRAME_INTERVAL_MS)
+        }, frameIntervalMs)
     }
 
     private fun captureFrame(service: InputService) {
@@ -110,7 +116,7 @@ object XmlCapture {
 
             // Рисуем UI дерево на canvas
             val canvas = Canvas(bmp)
-            canvas.drawColor(Color.BLACK)
+            canvas.drawColor(XmlRenderConfigManager.current.backgroundColor())
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val windows = service.getWindowsList().sortedBy { it.layer }
@@ -144,48 +150,73 @@ object XmlCapture {
     // Render UI tree
     // -----------------------------------------------------------------------
 
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val borderPaint = Paint().apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1f
-        color = Color.argb(60, 200, 200, 200)
-    }
-    private val clickBorderPaint = Paint().apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2f
-        color = Color.argb(120, 0, 200, 255)
-    }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = 28f
-    }
-    private val bounds = Rect()
-    private val rectF = android.graphics.RectF()
+    // Paint объекты переиспользуем — цвета обновляем из конфига каждый кадр
+    private val bgPaint          = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val borderPaint      = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1f }
+    private val clickBorderPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2f }
+    private val textPaint        = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bounds           = Rect()
+    private val rectF            = android.graphics.RectF()
 
     private fun renderNode(canvas: Canvas, node: AccessibilityNodeInfo, depth: Int = 0) {
+        val cfg = XmlRenderConfigManager.current
+
+        // Пропускаем невидимые если включено
+        if (cfg.skipInvisible && !node.isVisibleToUser) {
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                renderNode(canvas, child, depth + 1)
+                child.recycle()
+            }
+            return
+        }
+
+        // Ограничение глубины
+        if (depth > cfg.maxDepth) return
+
         node.getBoundsInScreen(bounds)
 
         if (!bounds.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
             rectF.set(bounds.left.toFloat(), bounds.top.toFloat(),
                       bounds.right.toFloat(), bounds.bottom.toFloat())
 
+            // Фон листового узла
             if (node.childCount == 0) {
-                bgPaint.color = pickNodeColor(node, depth)
+                bgPaint.color = cfg.nodeBgColor(
+                    node.isClickable, node.isFocused,
+                    node.isEditable, node.isCheckable, depth)
+                // Применяем contrast через alpha-модификацию
+                val a = (android.graphics.Color.alpha(bgPaint.color) * cfg.contrast)
+                    .toInt().coerceIn(0, 255)
+                bgPaint.alpha = a
                 canvas.drawRect(rectF, bgPaint)
             }
 
-            canvas.drawRect(rectF, if (node.isClickable) clickBorderPaint else borderPaint)
+            // Границы элементов
+            if (cfg.showClickableIndicators && node.isClickable) {
+                clickBorderPaint.color = cfg.clickableBorderColor()
+                canvas.drawRect(rectF, clickBorderPaint)
+            } else if (cfg.showWindowBorders) {
+                borderPaint.color = cfg.defaultBorderColor()
+                canvas.drawRect(rectF, borderPaint)
+            }
 
-            val text = node.text?.toString() ?: node.contentDescription?.toString()
-            if (!text.isNullOrBlank()) {
-                val maxWidth = bounds.width().toFloat() - 8f
-                val label = truncateText(text, textPaint, maxWidth)
-                canvas.drawText(
-                    label,
-                    bounds.left.toFloat() + 4f,
-                    bounds.top.toFloat() + textPaint.textSize + 4f,
-                    textPaint
-                )
+            // Текст
+            if (cfg.showTextContent) {
+                val text = node.text?.toString() ?: node.contentDescription?.toString()
+                if (!text.isNullOrBlank()) {
+                    textPaint.color     = cfg.textColor()
+                    textPaint.textSize  = cfg.textSize
+                    textPaint.isAntiAlias = true
+                    val maxWidth = bounds.width().toFloat() - 8f
+                    val label = truncateText(text, textPaint, maxWidth)
+                    canvas.drawText(
+                        label,
+                        bounds.left.toFloat() + 4f,
+                        bounds.top.toFloat() + textPaint.textSize + 4f,
+                        textPaint
+                    )
+                }
             }
         }
 
@@ -194,15 +225,6 @@ object XmlCapture {
             renderNode(canvas, child, depth + 1)
             child.recycle()
         }
-    }
-
-    private fun pickNodeColor(node: AccessibilityNodeInfo, depth: Int): Int = when {
-        node.isClickable && node.isFocused -> Color.argb(200, 30, 120, 200)
-        node.isClickable                   -> Color.argb(180, 40,  40,  60)
-        node.isEditable                    -> Color.argb(200, 20,  60,  20)
-        node.isCheckable                   -> Color.argb(180, 60,  40,  80)
-        depth % 2 == 0                     -> Color.argb(60,  30,  30,  40)
-        else                               -> Color.argb(40,  50,  50,  70)
     }
 
     private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {

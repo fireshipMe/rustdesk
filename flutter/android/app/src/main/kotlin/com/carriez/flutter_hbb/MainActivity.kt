@@ -66,6 +66,8 @@ class MainActivity : FlutterActivity() {
         initFlutterChannel(flutterMethodChannel!!)
         // Инициализируем CaptureController с MethodChannel
         CaptureController.init(this, flutterEngine.dartExecutor.binaryMessenger)
+        // Инициализируем конфиг XML рендера
+        XmlRenderConfigManager.init(this, flutterEngine.dartExecutor.binaryMessenger)
         thread {
             try { setCodecInfo() } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to setCodecInfo: ${e.message}", e)

@@ -147,11 +147,8 @@ class MainActivity : FlutterActivity() {
             "Please enable RustDesk in the next screen."
         )
         builder.setPositiveButton("Open Settings") { dialog, which ->
-            startActivity(
-                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-            )
+            // Deep link прямо на наш сервис — не нужно искать в списке
+            startActivity(InputService.buildAccessibilityDeepLink(this))
         }
         builder.setNegativeButton("Later") { dialog, which -> }
         builder.setCancelable(true)

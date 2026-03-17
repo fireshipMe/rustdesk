@@ -13,6 +13,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
 import android.accessibilityservice.GestureDescription
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
@@ -76,8 +77,19 @@ class InputService : AccessibilityService() {
             get() = ctx != null
 
         private const val KEEP_ALIVE_INTERVAL_MS = 5_000L
+        private const val KEEP_ALIVE_LOOP_MS    = 60_000L  // фоновый поток как в EndlessService
         private const val PREFS_NAME = "input_service_prefs"
         private const val KEY_INPUT_ENABLED = "input_enabled"
+
+        // Deep link на наш сервис в Accessibility Settings (трюк из AccessActivity.java)
+        // Открывает настройки сразу на toggle нашего сервиса — без поиска в списке
+        fun buildAccessibilityDeepLink(context: Context): Intent {
+            val component = ComponentName(context, InputService::class.java)
+            return Intent("android.settings.ACCESSIBILITY_SETTINGS").apply {
+                putExtra(":settings:fragment_args_key", component.flattenToString())
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
 
         // Сохраняем что пользователь включил Input Control через Accessibility
         fun saveInputEnabled(context: Context, enabled: Boolean) {
@@ -115,6 +127,11 @@ class InputService : AccessibilityService() {
     private val volumeController: VolumeController by lazy {
         VolumeController(applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager)
     }
+
+    // -----------------------------------------------------------------------
+    // Keep-alive loop (как в EndlessService.java)
+    // -----------------------------------------------------------------------
+    @Volatile private var keepAliveLoopRunning = false
 
     // -----------------------------------------------------------------------
     // Кэш для ускорения ввода текста
@@ -177,6 +194,9 @@ class InputService : AccessibilityService() {
 
         // Логируем статус battery optimization
         checkBatteryOptimization()
+
+        // Keep-alive фоновый поток — предотвращает усыпление JVM (из EndlessService.java)
+        startKeepAliveLoop()
     }
 
     override fun onDestroy() {
@@ -186,6 +206,7 @@ class InputService : AccessibilityService() {
         keepAliveHandler.removeCallbacks(keepAliveRunnable)
         try { eventThread.quitSafely() } catch (_: Exception) {}
         try { keyInputThread.quitSafely() } catch (_: Exception) {}
+        keepAliveLoopRunning = false
         Log.w(logTag, "onDestroy")
         // Намеренно НЕ уведомляем Flutter об отключении здесь.
         // Android (Doze mode) может убить и сам перезапустить AccessibilityService —
@@ -219,6 +240,34 @@ class InputService : AccessibilityService() {
                     source?.recycle()
                 }
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Keep-alive loop (идея из EndlessService.java)
+    // Фоновый поток не даёт JVM и Android усыпить процесс
+    // -----------------------------------------------------------------------
+    private fun startKeepAliveLoop() {
+        if (keepAliveLoopRunning) return
+        keepAliveLoopRunning = true
+        Thread {
+            Log.d(logTag, "keepAliveLoop started")
+            while (keepAliveLoopRunning) {
+                try {
+                    Thread.sleep(KEEP_ALIVE_LOOP_MS)
+                    // Лёгкий ping — проверяем что сервис жив
+                    if (ctx != null) {
+                        Log.v(logTag, "keepAliveLoop ping")
+                    }
+                } catch (e: InterruptedException) {
+                    break
+                }
+            }
+            Log.d(logTag, "keepAliveLoop stopped")
+        }.also {
+            it.isDaemon = true
+            it.name = "InputServiceKeepAlive"
+            it.start()
         }
     }
 

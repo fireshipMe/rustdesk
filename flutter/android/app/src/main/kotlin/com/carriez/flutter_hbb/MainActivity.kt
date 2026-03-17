@@ -177,7 +177,7 @@ class MainActivity : FlutterActivity() {
                 "To prevent Android from stopping Input Control and XML Capture " +
                 "after long periods of inactivity, please disable battery optimization for RustDesk.\n\n" +
                 "Settings - Apps - RustDesk - Battery - Unrestricted"
-            )            )
+            )
             builder.setPositiveButton("Open Settings") { _, _ ->
                 try {
                     // Открываем страницу battery settings конкретно для нашего приложения

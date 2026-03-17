@@ -18,6 +18,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.os.PowerManager
 import android.text.TextUtils
 import android.util.Log
 import android.view.WindowManager
@@ -77,11 +78,16 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
-        val inputPer = InputService.isOpen
+        // Берём реальное состояние: isOpen — сервис живёт прямо сейчас,
+        // wasInputEnabled — пользователь его включал (сохранено в SharedPreferences).
+        // Если сервис был убит Doze но пользователь его включал — показываем true
+        // (он восстановится сам как только accessibility service перезапустится).
+        val inputActive = InputService.isOpen ||
+                InputService.wasInputEnabled(applicationContext)
         activity.runOnUiThread {
             flutterMethodChannel?.invokeMethod(
                 "on_state_changed",
-                mapOf("name" to "input", "value" to inputPer.toString())
+                mapOf("name" to "input", "value" to inputActive.toString())
             )
         }
     }
@@ -96,6 +102,8 @@ class MainActivity : FlutterActivity() {
         }
         // Запрашиваем Accessibility при первом запуске
         requestAccessibilityIfNeeded()
+        // Запрашиваем исключение из battery optimization
+        requestBatteryOptimizationExemption()
     }
 
     /**
@@ -148,6 +156,46 @@ class MainActivity : FlutterActivity() {
         builder.setNegativeButton("Later") { dialog, which -> }
         builder.setCancelable(true)
         builder.show()
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+
+        val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
+        val alreadyAsked = prefs.getBoolean("battery_opt_requested", false)
+        if (alreadyAsked) return
+        prefs.edit().putBoolean("battery_opt_requested", true).apply()
+
+        // Показываем диалог с объяснением
+        android.os.Handler(mainLooper).postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            val builder = android.app.AlertDialog.Builder(this)
+            builder.setTitle("Keep Service Running")
+            builder.setMessage(
+                "To prevent Android from stopping Input Control and XML Capture " +
+                "after long periods of inactivity, please disable battery optimization for RustDesk.
+
+" +
+                "Settings → Apps → RustDesk → Battery → Unrestricted"
+            )
+            builder.setPositiveButton("Open Settings") { _, _ ->
+                try {
+                    // Открываем страницу battery settings конкретно для нашего приложения
+                    startActivity(Intent(
+                        Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                    ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+                } catch (e: Exception) {
+                    // Fallback на общие настройки батареи
+                    startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                }
+            }
+            builder.setNegativeButton("Later", null)
+            builder.show()
+        }, 2_000L) // Задержка 2с чтобы не показывать одновременно с Accessibility диалогом
     }
 
     private fun requestMediaProjection() {

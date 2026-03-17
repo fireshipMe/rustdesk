@@ -13,6 +13,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
 import android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
@@ -22,6 +23,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent as KeyEventAndroid
 import android.view.ViewConfiguration
@@ -72,8 +75,20 @@ class InputService : AccessibilityService() {
         val isOpen: Boolean
             get() = ctx != null
 
-        // Keep-alive interval
         private const val KEEP_ALIVE_INTERVAL_MS = 5_000L
+        private const val PREFS_NAME = "input_service_prefs"
+        private const val KEY_INPUT_ENABLED = "input_enabled"
+
+        // Сохраняем что пользователь включил Input Control через Accessibility
+        fun saveInputEnabled(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_INPUT_ENABLED, enabled).apply()
+        }
+
+        // Был ли Input Control включён в прошлой сессии
+        fun wasInputEnabled(context: Context): Boolean =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_INPUT_ENABLED, false)
     }
 
     private val logTag = "input service"
@@ -127,7 +142,7 @@ class InputService : AccessibilityService() {
 
         // Не пересоздаём ServiceInfo полностью — берём существующий из XML
         // и добавляем только FLAG_INPUT_METHOD_EDITOR (недоступен через XML).
-        // Полная замена через setServiceInfo(new AccessibilityServiceInfo()) 
+        // Полная замена через setServiceInfo(new AccessibilityServiceInfo())
         // сбрасывает canPerformGestures и вызывает "malfunctioning".
         if (Build.VERSION.SDK_INT >= 33) {
             serviceInfo?.let { info ->
@@ -141,6 +156,20 @@ class InputService : AccessibilityService() {
         fakeEditTextForTextStateCalculation?.onPreDraw()
 
         keepAliveHandler.postDelayed(keepAliveRunnable, KEEP_ALIVE_INTERVAL_MS)
+
+        // Сохраняем в SharedPreferences что сервис включён
+        saveInputEnabled(applicationContext, true)
+
+        // Уведомляем Flutter — Input Control активен
+        Handler(Looper.getMainLooper()).post {
+            MainActivity.flutterMethodChannel?.invokeMethod(
+                "on_state_changed",
+                mapOf("name" to "input", "value" to "true")
+            )
+        }
+
+        // Логируем статус battery optimization
+        checkBatteryOptimization()
     }
 
     override fun onDestroy() {
@@ -150,6 +179,10 @@ class InputService : AccessibilityService() {
         keepAliveHandler.removeCallbacks(keepAliveRunnable)
         try { eventThread.quitSafely() } catch (_: Exception) {}
         Log.w(logTag, "onDestroy")
+        // Намеренно НЕ уведомляем Flutter об отключении здесь.
+        // Android (Doze mode) может убить и сам перезапустить AccessibilityService —
+        // в этом случае Flutter не должен видеть это как "пользователь выключил".
+        // Flutter проверит реальное состояние через onResume / check_service.
         super.onDestroy()
     }
 
@@ -176,6 +209,25 @@ class InputService : AccessibilityService() {
                     source?.recycle()
                 }
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Battery optimization check
+    // -----------------------------------------------------------------------
+    private fun checkBatteryOptimization() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                Log.d(logTag, "Battery optimization: DISABLED (protected) ✓")
+            } else {
+                Log.w(logTag, "Battery optimization: ENABLED — Doze may kill this service!")
+                // Не открываем Settings автоматически отсюда —
+                // это делает MainActivity при первом запуске приложения
+            }
+        } catch (e: Exception) {
+            Log.e(logTag, "checkBatteryOptimization error", e)
         }
     }
 

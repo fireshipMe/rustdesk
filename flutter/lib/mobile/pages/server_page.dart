@@ -490,8 +490,16 @@ class _PermissionCheckerState extends State<PermissionChecker> {
           // ── Кнопка настроек XML (только когда XML активен) ──
           if (serverModel.captureMethod == 'xml')
             _buildXmlSettingsButton(context),
-          PermissionRow(translate("Input Control"), serverModel.inputOk,
-              serverModel.toggleInput),
+          // Input Control — с замочком если уже включён
+          serverModel.inputEverEnabled
+              ? _LockedPermissionRow(
+                  name: translate("Input Control"),
+                  isOk: serverModel.inputOk,
+                  onPressed: serverModel.toggleInput)
+              : PermissionRow(
+                  translate("Input Control"),
+                  serverModel.inputOk,
+                  serverModel.toggleInput),
           PermissionRow(translate("Transfer file"), serverModel.fileOk,
               serverModel.toggleFile),
           hasAudioPermission
@@ -656,6 +664,43 @@ class _CaptureChip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+
+/// PermissionRow с замочком — показывает что разрешение включено и заблокировано
+class _LockedPermissionRow extends StatelessWidget {
+  const _LockedPermissionRow({
+    required this.name,
+    required this.isOk,
+    required this.onPressed,
+  });
+
+  final String name;
+  final bool isOk;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      visualDensity: VisualDensity.compact,
+      contentPadding: EdgeInsets.zero,
+      title: Row(children: [
+        Expanded(child: Text(name)),
+        const SizedBox(width: 4),
+        Tooltip(
+          message: translate("Managed via Accessibility Settings"),
+          child: Icon(
+            Icons.lock_outline,
+            size: 14,
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.7),
+          ),
+        ),
+      ]),
+      trailing: Switch(
+        value: isOk,
+        onChanged: (_) => onPressed(),
+      ),
+    );
+  }
+}
 
 class PermissionRow extends StatelessWidget {
   const PermissionRow(this.name, this.isOk, this.onPressed, {Key? key})

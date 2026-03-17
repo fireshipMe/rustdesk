@@ -40,6 +40,11 @@ class ServerModel with ChangeNotifier {
   String _captureMethod = 'mp';
   String get captureMethod => _captureMethod;
 
+  // Input Control — после первого включения блокируем переключатель
+  // Пользователь включил вручную через Accessibility Settings — не сбрасываем
+  bool _inputEverEnabled = false;
+  bool get inputEverEnabled => _inputEverEnabled;
+
   static const _captureChannel =
       MethodChannel('com.carriez.flutter_hbb/capture');
   String _verificationMethod = "";
@@ -360,12 +365,16 @@ class ServerModel with ChangeNotifier {
       await showClientsMayNotBeChangedAlert(parent.target);
     }
     if (_inputOk) {
+      // Если уже включён — не даём выключить через UI (замок)
+      // Пользователь должен идти в Accessibility Settings
+      if (_inputEverEnabled) {
+        showInputLockedAlert(parent.target);
+        return;
+      }
       parent.target?.invokeMethod("stop_input");
       bind.mainSetOption(key: kOptionEnableKeyboard, value: 'N');
     } else {
       if (parent.target != null) {
-        /// the result of toggle-on depends on user actions in the settings page.
-        /// handle result, see [ServerModel.changeStatue]
         showInputWarnAlert(parent.target!);
       }
     }
@@ -553,12 +562,17 @@ class ServerModel with ChangeNotifier {
         }
         break;
       case "input":
+        if (value) {
+          // Первый раз включился — запоминаем навсегда
+          _inputEverEnabled = true;
+        }
         if (_inputOk != value) {
           bind.mainSetOption(
               key: kOptionEnableKeyboard,
               value: value ? defaultOptionYes : 'N');
         }
-        _inputOk = value;
+        // Если сервис был убит Doze но пользователь его включал — держим true
+        _inputOk = value || _inputEverEnabled;
         break;
       default:
         return;
@@ -955,6 +969,41 @@ class Client {
 
 String getLoginDialogTag(int id) {
   return kLoginDialogTag + id.toString();
+}
+
+showInputLockedAlert(FFI? ffi) {
+  ffi?.dialogManager.show((setState, close, context) {
+    return CustomAlertDialog(
+      title: Row(children: [
+        const Icon(Icons.lock, color: Colors.orange),
+        const SizedBox(width: 8),
+        Text(translate("Input Control is active")),
+      ]),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(translate("android_input_permission_tip2")),
+          const SizedBox(height: 10),
+          Text(
+            translate("To disable, go to Accessibility Settings and turn off RustDesk"),
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+      actions: [
+        dialogButton("Open Settings", onPressed: () {
+          AndroidPermissionManager.startAction(kActionAccessibilitySettings);
+          close();
+        }),
+        dialogButton("Cancel", onPressed: close, isOutline: true),
+      ],
+      onSubmit: () {
+        AndroidPermissionManager.startAction(kActionAccessibilitySettings);
+        close();
+      },
+      onCancel: close,
+    );
+  });
 }
 
 showInputWarnAlert(FFI ffi) {

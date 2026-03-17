@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -158,8 +160,18 @@ object XmlCapture {
     private val clickBorderPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2f }
     // TextPaint нужен для StaticLayout
     private val textPaint        = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    // Виджет-специфичные Paint объекты
+    private val widgetFillPaint  = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val widgetStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val checkPaint       = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val checkPath        = Path()
     private val bounds           = Rect()
-    private val rectF            = android.graphics.RectF()
+    private val rectF            = RectF()
+    private val tmpRectF         = RectF()
 
     private fun renderNode(canvas: Canvas, node: AccessibilityNodeInfo, depth: Int = 0) {
         val cfg = XmlRenderConfigManager.current
@@ -206,10 +218,18 @@ object XmlCapture {
                 canvas.drawRect(rectF, borderPaint)
             }
 
-            // Текст — только в листовых нодах со своими bounds
-            if (cfg.showTextContent && node.childCount == 0) {
+            // Специальные виджеты — рисуем поверх фона
+            val className = node.className?.toString() ?: ""
+            val drawn = when {
+                isSeekBar(className)  -> { drawSeekBar(canvas, node, rectF, scale); true }
+                isCheckable(node)     -> { drawCheckable(canvas, node, rectF, scale, cfg.colorScheme); true }
+                else                  -> false
+            }
+
+            // Текст — только в листовых нодах, и только если виджет не нарисован сам себя
+            if (cfg.showTextContent && node.childCount == 0 && !isSeekBar(className)) {
                 val text = node.text?.toString()?.trim()
-                    ?: node.contentDescription?.toString()?.trim()
+                    ?: if (!drawn) node.contentDescription?.toString()?.trim() else null
                 if (!text.isNullOrBlank()) {
                     drawNodeText(canvas, text, rectF, cfg.textSize / scale, cfg.textColor())
                 }
@@ -223,6 +243,172 @@ object XmlCapture {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Helpers для определения типа виджета
+    // -----------------------------------------------------------------------
+
+    private fun isSeekBar(className: String) =
+        className.endsWith("SeekBar") || className.endsWith("Slider")
+
+    private fun isCheckable(node: AccessibilityNodeInfo) =
+        node.isCheckable || node.isChecked ||
+        node.className?.toString()?.let {
+            it.endsWith("CheckBox") || it.endsWith("RadioButton") ||
+            it.endsWith("Switch") || it.endsWith("ToggleButton") ||
+            it.endsWith("CheckedTextView")
+        } == true
+
+    // -----------------------------------------------------------------------
+    // SeekBar / Slider
+    // -----------------------------------------------------------------------
+
+    private fun drawSeekBar(
+        canvas: Canvas,
+        node: AccessibilityNodeInfo,
+        r: RectF,
+        scale: Float
+    ) {
+        val rangeInfo = node.rangeInfo ?: return
+        val min      = rangeInfo.min
+        val max      = rangeInfo.max
+        val current  = rangeInfo.current
+        val progress = if (max > min) (current - min) / (max - min) else 0f
+
+        val trackH    = (4f / scale).coerceAtLeast(2f)
+        val thumbR    = (10f / scale).coerceAtLeast(4f)
+        val trackPad  = thumbR                          // трек не заходит под thumb
+        val centerY   = r.centerY()
+
+        // Трек фон (серый)
+        tmpRectF.set(
+            r.left + trackPad, centerY - trackH / 2f,
+            r.right - trackPad, centerY + trackH / 2f
+        )
+        widgetFillPaint.color = Color.argb(120, 150, 150, 150)
+        canvas.drawRoundRect(tmpRectF, trackH, trackH, widgetFillPaint)
+
+        // Трек заполнение (акцентный цвет)
+        val fillRight = r.left + trackPad + (r.width() - trackPad * 2) * progress
+        tmpRectF.set(r.left + trackPad, centerY - trackH / 2f, fillRight, centerY + trackH / 2f)
+        widgetFillPaint.color = Color.argb(220, 0, 120, 255)
+        canvas.drawRoundRect(tmpRectF, trackH, trackH, widgetFillPaint)
+
+        // Thumb (белый круг с синей обводкой)
+        val thumbX = r.left + trackPad + (r.width() - trackPad * 2) * progress
+        widgetFillPaint.color = Color.WHITE
+        canvas.drawCircle(thumbX, centerY, thumbR, widgetFillPaint)
+        widgetStrokePaint.color  = Color.argb(220, 0, 100, 220)
+        widgetStrokePaint.strokeWidth = (2f / scale).coerceAtLeast(1f)
+        canvas.drawCircle(thumbX, centerY, thumbR, widgetStrokePaint)
+    }
+
+    // -----------------------------------------------------------------------
+    // CheckBox / RadioButton / Switch / CheckedTextView
+    // -----------------------------------------------------------------------
+
+    private fun drawCheckable(
+        canvas: Canvas,
+        node: AccessibilityNodeInfo,
+        r: RectF,
+        scale: Float,
+        colorScheme: XmlRenderConfig.ColorScheme
+    ) {
+        val isChecked = node.isChecked
+        val className = node.className?.toString() ?: ""
+
+        val accentColor = when (colorScheme) {
+            XmlRenderConfig.ColorScheme.HIGH_CONTRAST -> Color.YELLOW
+            XmlRenderConfig.ColorScheme.LIGHT         -> Color.argb(255, 0, 100, 220)
+            else                                       -> Color.argb(255, 0, 140, 255)
+        }
+        val boxSize  = (r.height() * 0.55f).coerceIn(12f / scale, 28f / scale)
+        val strokeW  = (2f / scale).coerceAtLeast(1f)
+
+        when {
+            className.endsWith("RadioButton") ->
+                drawRadio(canvas, r, boxSize, strokeW, isChecked, accentColor)
+
+            className.endsWith("Switch") || className.endsWith("ToggleButton") ->
+                drawSwitch(canvas, r, boxSize, strokeW, isChecked, accentColor, scale)
+
+            else -> // CheckBox, CheckedTextView, generic checkable
+                drawCheckBox(canvas, r, boxSize, strokeW, isChecked, accentColor)
+        }
+    }
+
+    private fun drawCheckBox(
+        canvas: Canvas, r: RectF, size: Float, strokeW: Float,
+        checked: Boolean, accent: Int
+    ) {
+        val cx = r.right - size / 2f - strokeW * 2
+        val cy = r.centerY()
+        val half = size / 2f
+        tmpRectF.set(cx - half, cy - half, cx + half, cy + half)
+
+        // Фон
+        widgetFillPaint.color = if (checked) accent else Color.argb(60, 200, 200, 200)
+        canvas.drawRoundRect(tmpRectF, size * 0.2f, size * 0.2f, widgetFillPaint)
+
+        // Обводка
+        widgetStrokePaint.color       = if (checked) accent else Color.argb(180, 150, 150, 150)
+        widgetStrokePaint.strokeWidth = strokeW
+        canvas.drawRoundRect(tmpRectF, size * 0.2f, size * 0.2f, widgetStrokePaint)
+
+        // Галочка
+        if (checked) {
+            checkPaint.color       = Color.WHITE
+            checkPaint.strokeWidth = strokeW * 1.8f
+            checkPath.reset()
+            checkPath.moveTo(cx - half * 0.55f, cy)
+            checkPath.lineTo(cx - half * 0.1f,  cy + half * 0.45f)
+            checkPath.lineTo(cx + half * 0.55f, cy - half * 0.45f)
+            canvas.drawPath(checkPath, checkPaint)
+        }
+    }
+
+    private fun drawRadio(
+        canvas: Canvas, r: RectF, size: Float, strokeW: Float,
+        checked: Boolean, accent: Int
+    ) {
+        val cx = r.right - size / 2f - strokeW * 2
+        val cy = r.centerY()
+        val radius = size / 2f
+
+        widgetFillPaint.color = Color.argb(60, 200, 200, 200)
+        canvas.drawCircle(cx, cy, radius, widgetFillPaint)
+
+        widgetStrokePaint.color       = if (checked) accent else Color.argb(180, 150, 150, 150)
+        widgetStrokePaint.strokeWidth = strokeW
+        canvas.drawCircle(cx, cy, radius, widgetStrokePaint)
+
+        if (checked) {
+            widgetFillPaint.color = accent
+            canvas.drawCircle(cx, cy, radius * 0.55f, widgetFillPaint)
+        }
+    }
+
+    private fun drawSwitch(
+        canvas: Canvas, r: RectF, size: Float, strokeW: Float,
+        checked: Boolean, accent: Int, scale: Float
+    ) {
+        val trackW = size * 1.8f
+        val trackH = size * 0.65f
+        val cx     = r.right - trackW / 2f - strokeW * 2
+        val cy     = r.centerY()
+
+        // Трек
+        tmpRectF.set(cx - trackW / 2f, cy - trackH / 2f, cx + trackW / 2f, cy + trackH / 2f)
+        widgetFillPaint.color = if (checked) accent else Color.argb(120, 150, 150, 150)
+        canvas.drawRoundRect(tmpRectF, trackH, trackH, widgetFillPaint)
+
+        // Thumb
+        val thumbR  = size * 0.42f
+        val thumbX  = if (checked) cx + trackW / 2f - thumbR - strokeW
+                      else         cx - trackW / 2f + thumbR + strokeW
+        widgetFillPaint.color = Color.WHITE
+        canvas.drawCircle(thumbX, cy, thumbR, widgetFillPaint)
+    }
+
     /**
      * Рисует текст внутри bounds ноды с правильным переносом строк и вертикальным центрированием.
      * Использует StaticLayout для многострочности.
@@ -230,7 +416,7 @@ object XmlCapture {
     private fun drawNodeText(
         canvas: Canvas,
         text: String,
-        nodeBounds: android.graphics.RectF,
+        nodeBounds: RectF,
         textSize: Float,
         textColor: Int
     ) {

@@ -37,7 +37,14 @@ object AutoClick {
     private val entireLabels    = listOf("Entire screen", "Весь экран", "Full screen")
     private val singleAppLabels = listOf("A single app", "Одно приложение", "Single app")
     private val startLabels     = listOf("Start", "Начать", "Старт")
-    private val confirmLabels   = listOf("Start now", "Начать", "Allow", "Разрешить")
+    private val confirmLabels   = listOf("Start now", "Start recording", "Начать запись")
+
+    // Пакеты которые показывают MP диалог — только системные
+    private val MP_PACKAGES = setOf(
+        "com.android.systemui",
+        "android",
+        "com.android.server.telecom"
+    )
 
     // -----------------------------------------------------------------------
     // Точка входа
@@ -46,7 +53,10 @@ object AutoClick {
         source ?: return
         try {
             if (handleMpDialogAndroid14(source)) return
-            handleMpConfirmAndroid13(source)
+            // Android≤13: только если системный пакет — не кликаем в чужих диалогах
+            if (pkg in MP_PACKAGES || pkg.isEmpty()) {
+                handleMpConfirmAndroid13(source)
+            }
         } catch (e: Exception) {
             android.util.Log.e(TAG, "handleEvent error", e)
         }
@@ -141,7 +151,8 @@ object AutoClick {
     }
 
     // -----------------------------------------------------------------------
-    // Android ≤ 13 — "Start now" / "Allow"
+    // Android ≤ 13 — только "Start now" / "Start recording" (специфично для MP)
+    // "Allow"/"Разрешить" убраны — слишком общие, срабатывают на любые permission диалоги
     // -----------------------------------------------------------------------
     private fun handleMpConfirmAndroid13(
         source: android.view.accessibility.AccessibilityNodeInfo
@@ -149,7 +160,7 @@ object AutoClick {
         val node = findClickableByTexts(source, confirmLabels) ?: return false
         val label = node.text?.toString() ?: ""
         if (canClick("confirm_$label")) {
-            android.util.Log.d(TAG, "Android≤13: clicking '$label'")
+            android.util.Log.d(TAG, "Android<=13: clicking '$label'")
             node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             node.recycle()
             return true

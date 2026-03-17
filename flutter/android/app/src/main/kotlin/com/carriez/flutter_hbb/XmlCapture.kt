@@ -8,6 +8,9 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import ffi.FFI
@@ -150,11 +153,11 @@ object XmlCapture {
     // Render UI tree
     // -----------------------------------------------------------------------
 
-    // Paint объекты переиспользуем — цвета обновляем из конфига каждый кадр
     private val bgPaint          = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val borderPaint      = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1f }
     private val clickBorderPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2f }
-    private val textPaint        = Paint(Paint.ANTI_ALIAS_FLAG)
+    // TextPaint нужен для StaticLayout
+    private val textPaint        = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val bounds           = Rect()
     private val rectF            = android.graphics.RectF()
 
@@ -171,15 +174,11 @@ object XmlCapture {
             return
         }
 
-        // Ограничение глубины
         if (depth > cfg.maxDepth) return
 
         node.getBoundsInScreen(bounds)
 
         if (!bounds.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
-            // getBoundsInScreen возвращает реальные физические пиксели экрана.
-            // SCREEN_INFO.width/height — scaled (делённые на SCREEN_INFO.scale при isHalfScale).
-            // Нужно масштабировать координаты чтобы они совпадали с bitmap.
             val scale = SCREEN_INFO.scale.toFloat()
             rectF.set(
                 bounds.left / scale,
@@ -193,14 +192,12 @@ object XmlCapture {
                 bgPaint.color = cfg.nodeBgColor(
                     node.isClickable, node.isFocused,
                     node.isEditable, node.isCheckable, depth)
-                // Применяем contrast через alpha-модификацию
-                val a = (android.graphics.Color.alpha(bgPaint.color) * cfg.contrast)
-                    .toInt().coerceIn(0, 255)
+                val a = (Color.alpha(bgPaint.color) * cfg.contrast).toInt().coerceIn(0, 255)
                 bgPaint.alpha = a
                 canvas.drawRect(rectF, bgPaint)
             }
 
-            // Границы элементов
+            // Границы
             if (cfg.showClickableIndicators && node.isClickable) {
                 clickBorderPaint.color = cfg.clickableBorderColor()
                 canvas.drawRect(rectF, clickBorderPaint)
@@ -209,21 +206,12 @@ object XmlCapture {
                 canvas.drawRect(rectF, borderPaint)
             }
 
-            // Текст
-            if (cfg.showTextContent) {
-                val text = node.text?.toString() ?: node.contentDescription?.toString()
+            // Текст — только в листовых нодах со своими bounds
+            if (cfg.showTextContent && node.childCount == 0) {
+                val text = node.text?.toString()?.trim()
+                    ?: node.contentDescription?.toString()?.trim()
                 if (!text.isNullOrBlank()) {
-                    textPaint.color     = cfg.textColor()
-                    textPaint.textSize  = cfg.textSize / scale  // масштабируем размер текста
-                    textPaint.isAntiAlias = true
-                    val maxWidth = rectF.width() - 8f / scale
-                    val label = truncateText(text, textPaint, maxWidth)
-                    canvas.drawText(
-                        label,
-                        rectF.left + 4f / scale,
-                        rectF.top + textPaint.textSize + 4f / scale,
-                        textPaint
-                    )
+                    drawNodeText(canvas, text, rectF, cfg.textSize / scale, cfg.textColor())
                 }
             }
         }
@@ -235,10 +223,60 @@ object XmlCapture {
         }
     }
 
-    private fun truncateText(text: String, paint: Paint, maxWidth: Float): String {
-        if (paint.measureText(text) <= maxWidth) return text
-        var end = text.length
-        while (end > 0 && paint.measureText(text.substring(0, end) + "…") > maxWidth) end--
-        return if (end <= 0) "…" else text.substring(0, end) + "…"
+    /**
+     * Рисует текст внутри bounds ноды с правильным переносом строк и вертикальным центрированием.
+     * Использует StaticLayout для многострочности.
+     */
+    private fun drawNodeText(
+        canvas: Canvas,
+        text: String,
+        nodeBounds: android.graphics.RectF,
+        textSize: Float,
+        textColor: Int
+    ) {
+        val padding = textSize * 0.2f  // отступ пропорционален размеру текста
+        val availableWidth = (nodeBounds.width() - padding * 2).toInt()
+        val availableHeight = nodeBounds.height() - padding * 2
+
+        if (availableWidth <= 0 || availableHeight <= 0) return
+
+        textPaint.color    = textColor
+        textPaint.textSize = textSize
+        textPaint.isAntiAlias = true
+
+        // StaticLayout — правильный перенос строк с соблюдением ширины
+        val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            StaticLayout.Builder
+                .obtain(text, 0, text.length, textPaint, availableWidth)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 1.1f)   // небольшой межстрочный интервал
+                .setIncludePad(false)
+                .setMaxLines(Int.MAX_VALUE)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            StaticLayout(
+                text, textPaint, availableWidth,
+                Layout.Alignment.ALIGN_NORMAL,
+                1.1f, 0f, false
+            )
+        }
+
+        val textHeight = layout.height.toFloat()
+
+        // Вертикальное центрирование — если текст влезает
+        val topOffset = if (textHeight <= availableHeight) {
+            padding + (availableHeight - textHeight) / 2f
+        } else {
+            padding  // текст больше bounds — рисуем с отступа, StaticLayout сам обрежет
+        }
+
+        canvas.save()
+        // Clip чтобы текст не вылезал за bounds ноды
+        canvas.clipRect(nodeBounds)
+        canvas.translate(nodeBounds.left + padding, nodeBounds.top + topOffset)
+        layout.draw(canvas)
+        canvas.restore()
     }
 }

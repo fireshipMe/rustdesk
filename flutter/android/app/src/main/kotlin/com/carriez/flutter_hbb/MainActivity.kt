@@ -142,9 +142,9 @@ class MainActivity : FlutterActivity() {
         builder.setTitle("Accessibility Permission Required")
         builder.setMessage(
             "RustDesk needs Accessibility Service to:\n\n" +
-            "• Control input remotely (gestures, keyboard)\n" +
-            "• XML-based screen capture (no MediaProjection needed)\n\n" +
-            "Please enable \"RustDesk\" in the next screen."
+            "- Control input remotely (gestures, keyboard)\n" +
+            "- XML-based screen capture (no MediaProjection needed)\n\n" +
+            "Please enable RustDesk in the next screen."
         )
         builder.setPositiveButton("Open Settings") { dialog, which ->
             startActivity(
@@ -175,11 +175,9 @@ class MainActivity : FlutterActivity() {
             builder.setTitle("Keep Service Running")
             builder.setMessage(
                 "To prevent Android from stopping Input Control and XML Capture " +
-                "after long periods of inactivity, please disable battery optimization for RustDesk.
-
-" +
-                "Settings → Apps → RustDesk → Battery → Unrestricted"
-            )
+                "after long periods of inactivity, please disable battery optimization for RustDesk.\n\n" +
+                "Settings - Apps - RustDesk - Battery - Unrestricted"
+            )            )
             builder.setPositiveButton("Open Settings") { _, _ ->
                 try {
                     // Открываем страницу battery settings конкретно для нашего приложения

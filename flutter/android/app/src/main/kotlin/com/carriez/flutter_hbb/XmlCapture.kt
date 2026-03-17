@@ -220,18 +220,28 @@ object XmlCapture {
 
             // Специальные виджеты — рисуем поверх фона
             val className = node.className?.toString() ?: ""
-            val drawn = when {
-                isSeekBar(className)  -> { drawSeekBar(canvas, node, rectF, scale); true }
-                isCheckable(node)     -> { drawCheckable(canvas, node, rectF, scale, cfg.colorScheme); true }
-                else                  -> false
+            val isCheck = isCheckable(node)
+            val isSeeK  = isSeekBar(className)
+            when {
+                isSeeK   -> drawSeekBar(canvas, node, rectF, scale)
+                isCheck  -> drawCheckable(canvas, node, rectF, scale, cfg.colorScheme)
             }
 
-            // Текст — только в листовых нодах, и только если виджет не нарисован сам себя
-            if (cfg.showTextContent && node.childCount == 0 && !isSeekBar(className)) {
+            // Текст — только в листовых нодах
+            // SeekBar: пропускаем (числовое значение не нужно)
+            // Switch/CheckBox/Radio: текст слева, иконка справа — оставляем место
+            if (cfg.showTextContent && node.childCount == 0 && !isSeeK) {
                 val text = node.text?.toString()?.trim()
-                    ?: if (!drawn) node.contentDescription?.toString()?.trim() else null
+                    ?: node.contentDescription?.toString()?.trim()
                 if (!text.isNullOrBlank()) {
-                    drawNodeText(canvas, text, rectF, cfg.textSize / scale, cfg.textColor())
+                    val textBounds = if (isCheck) {
+                        // Иконка занимает ~height*1.2 с правого края
+                        val iconW = (rectF.height() * 1.2f).coerceIn(16f / scale, 36f / scale)
+                        RectF(rectF.left, rectF.top, rectF.right - iconW - 4f / scale, rectF.bottom)
+                    } else {
+                        rectF
+                    }
+                    drawNodeText(canvas, text, textBounds, cfg.textSize / scale, cfg.textColor())
                 }
             }
         }
@@ -262,42 +272,90 @@ object XmlCapture {
     // SeekBar / Slider
     // -----------------------------------------------------------------------
 
+    /**
+     * Пробуем извлечь прогресс из текста типа "50%", "3/10", "50"
+     */
+    private fun parseProgressFromText(text: String?): Float? {
+        if (text.isNullOrBlank()) return null
+        return try {
+            when {
+                text.contains('%') ->
+                    text.replace('%', ' ').trim().toFloat() / 100f
+                text.contains('/') -> {
+                    val parts = text.split('/')
+                    if (parts.size == 2) {
+                        val cur = parts[0].trim().toFloat()
+                        val max = parts[1].trim().toFloat()
+                        if (max > 0) cur / max else null
+                    } else null
+                }
+                else -> null
+            }
+        } catch (_: Exception) { null }
+    }
+
     private fun drawSeekBar(
         canvas: Canvas,
         node: AccessibilityNodeInfo,
         r: RectF,
         scale: Float
     ) {
-        val rangeInfo = node.rangeInfo ?: return
-        val min      = rangeInfo.min
-        val max      = rangeInfo.max
-        val current  = rangeInfo.current
-        val progress = if (max > min) (current - min) / (max - min) else 0f
+        val rangeInfo = node.rangeInfo
+        // Логируем один раз чтобы видеть что даёт AccessibilityNodeInfo
+        Log.d("XmlCapture", "SeekBar rangeInfo=$rangeInfo " +
+            "text=${node.text} desc=${node.contentDescription} " +
+            "stateDesc=${if (Build.VERSION.SDK_INT >= 30) node.stateDescription else null}")
 
-        val trackH    = (4f / scale).coerceAtLeast(2f)
-        val thumbR    = (10f / scale).coerceAtLeast(4f)
-        val trackPad  = thumbR                          // трек не заходит под thumb
+        val progress: Float
+        if (rangeInfo != null) {
+            val min = rangeInfo.min
+            val max = rangeInfo.max
+            val current = rangeInfo.current
+            progress = if (max > min) (current - min) / (max - min) else 0f
+        } else {
+            // Fallback: пробуем распарсить из stateDescription или text
+            // Например "50%" или "50/100"
+            val stateText = if (Build.VERSION.SDK_INT >= 30) {
+                node.stateDescription?.toString()
+            } else null
+            val rawText = stateText ?: node.text?.toString() ?: node.contentDescription?.toString()
+            progress = parseProgressFromText(rawText) ?: 0.5f // 0.5 если не можем определить
+        }
+
+        val trackH    = (6f / scale).coerceAtLeast(3f)   // чуть толще
+        val thumbR    = (12f / scale).coerceAtLeast(5f)
+        val trackPad  = thumbR
         val centerY   = r.centerY()
+        val trackLeft  = r.left + trackPad
+        val trackRight = r.right - trackPad
+
+        // Защита: если ширина слишком мала
+        if (trackRight <= trackLeft) return
+
+        val trackWidth = trackRight - trackLeft
 
         // Трек фон (серый)
-        tmpRectF.set(
-            r.left + trackPad, centerY - trackH / 2f,
-            r.right - trackPad, centerY + trackH / 2f
-        )
-        widgetFillPaint.color = Color.argb(120, 150, 150, 150)
-        canvas.drawRoundRect(tmpRectF, trackH, trackH, widgetFillPaint)
+        tmpRectF.set(trackLeft, centerY - trackH / 2f, trackRight, centerY + trackH / 2f)
+        widgetFillPaint.color = Color.argb(150, 150, 150, 150)
+        canvas.drawRoundRect(tmpRectF, trackH / 2f, trackH / 2f, widgetFillPaint)
 
-        // Трек заполнение (акцентный цвет)
-        val fillRight = r.left + trackPad + (r.width() - trackPad * 2) * progress
-        tmpRectF.set(r.left + trackPad, centerY - trackH / 2f, fillRight, centerY + trackH / 2f)
-        widgetFillPaint.color = Color.argb(220, 0, 120, 255)
-        canvas.drawRoundRect(tmpRectF, trackH, trackH, widgetFillPaint)
+        // Трек заполнение (синий) — минимум 2dp чтобы было видно
+        val fillWidth  = (trackWidth * progress).coerceAtLeast(trackH)
+        val fillRight  = trackLeft + fillWidth
+        tmpRectF.set(trackLeft, centerY - trackH / 2f, fillRight, centerY + trackH / 2f)
+        widgetFillPaint.color = Color.argb(230, 0, 120, 255)
+        canvas.drawRoundRect(tmpRectF, trackH / 2f, trackH / 2f, widgetFillPaint)
 
-        // Thumb (белый круг с синей обводкой)
-        val thumbX = r.left + trackPad + (r.width() - trackPad * 2) * progress
+        // Thumb (белый круг с тенью + синяя обводка)
+        val thumbX = (trackLeft + trackWidth * progress).coerceIn(trackLeft + thumbR, trackRight - thumbR)
+        // Тень
+        widgetFillPaint.color = Color.argb(60, 0, 0, 0)
+        canvas.drawCircle(thumbX + 1f / scale, centerY + 1f / scale, thumbR, widgetFillPaint)
+        // Белый круг
         widgetFillPaint.color = Color.WHITE
         canvas.drawCircle(thumbX, centerY, thumbR, widgetFillPaint)
-        widgetStrokePaint.color  = Color.argb(220, 0, 100, 220)
+        // Обводка
+        widgetStrokePaint.color       = Color.argb(230, 0, 100, 220)
         widgetStrokePaint.strokeWidth = (2f / scale).coerceAtLeast(1f)
         canvas.drawCircle(thumbX, centerY, thumbR, widgetStrokePaint)
     }

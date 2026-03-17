@@ -177,8 +177,16 @@ object XmlCapture {
         node.getBoundsInScreen(bounds)
 
         if (!bounds.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
-            rectF.set(bounds.left.toFloat(), bounds.top.toFloat(),
-                      bounds.right.toFloat(), bounds.bottom.toFloat())
+            // getBoundsInScreen возвращает реальные физические пиксели экрана.
+            // SCREEN_INFO.width/height — scaled (делённые на SCREEN_INFO.scale при isHalfScale).
+            // Нужно масштабировать координаты чтобы они совпадали с bitmap.
+            val scale = SCREEN_INFO.scale.toFloat()
+            rectF.set(
+                bounds.left / scale,
+                bounds.top / scale,
+                bounds.right / scale,
+                bounds.bottom / scale
+            )
 
             // Фон листового узла
             if (node.childCount == 0) {
@@ -206,14 +214,14 @@ object XmlCapture {
                 val text = node.text?.toString() ?: node.contentDescription?.toString()
                 if (!text.isNullOrBlank()) {
                     textPaint.color     = cfg.textColor()
-                    textPaint.textSize  = cfg.textSize
+                    textPaint.textSize  = cfg.textSize / scale  // масштабируем размер текста
                     textPaint.isAntiAlias = true
-                    val maxWidth = bounds.width().toFloat() - 8f
+                    val maxWidth = rectF.width() - 8f / scale
                     val label = truncateText(text, textPaint, maxWidth)
                     canvas.drawText(
                         label,
-                        bounds.left.toFloat() + 4f,
-                        bounds.top.toFloat() + textPaint.textSize + 4f,
+                        rectF.left + 4f / scale,
+                        rectF.top + textPaint.textSize + 4f / scale,
                         textPaint
                     )
                 }

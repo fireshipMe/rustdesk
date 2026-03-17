@@ -117,6 +117,13 @@ class InputService : AccessibilityService() {
     }
 
     // -----------------------------------------------------------------------
+    // Кэш для ускорения ввода текста
+    // -----------------------------------------------------------------------
+    @Volatile private var cachedFocusedNode: AccessibilityNodeInfo? = null
+    @Volatile private var cachedFocusedNodeTime = 0L
+    private val FOCUS_CACHE_TTL_MS = 2_000L
+
+    // -----------------------------------------------------------------------
     // Keep-alive
     // -----------------------------------------------------------------------
     private val keepAliveHandler = Handler(Looper.getMainLooper())
@@ -178,6 +185,7 @@ class InputService : AccessibilityService() {
         AutoClick.reset()
         keepAliveHandler.removeCallbacks(keepAliveRunnable)
         try { eventThread.quitSafely() } catch (_: Exception) {}
+        try { keyInputThread.quitSafely() } catch (_: Exception) {}
         Log.w(logTag, "onDestroy")
         // Намеренно НЕ уведомляем Flutter об отключении здесь.
         // Android (Doze mode) может убить и сам перезапустить AccessibilityService —
@@ -200,6 +208,8 @@ class InputService : AccessibilityService() {
         if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             val pkg = event.packageName?.toString() ?: ""
+            // Смена окна — сбрасываем кэш фокуса
+            if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) invalidateFocusCache()
             val source = event.source
             eventHandler.post {
                 try {
@@ -463,6 +473,31 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     // Key event
     // -----------------------------------------------------------------------
+    // Отдельный handler — не засоряем main looper, убираем задержку
+    private val keyInputThread = HandlerThread("KeyInputThread").also { it.start() }
+    private val keyInputHandler = Handler(keyInputThread.looper)
+
+    private fun getCachedFocusedNode(): AccessibilityNodeInfo? {
+        val now = System.currentTimeMillis()
+        if (now - cachedFocusedNodeTime > FOCUS_CACHE_TTL_MS) {
+            cachedFocusedNode = null
+            return null
+        }
+        return cachedFocusedNode?.takeIf {
+            try { it.refresh() } catch (_: Exception) { false }
+        }
+    }
+
+    private fun updateFocusCache(node: AccessibilityNodeInfo) {
+        cachedFocusedNode = node
+        cachedFocusedNodeTime = System.currentTimeMillis()
+    }
+
+    fun invalidateFocusCache() {
+        cachedFocusedNode = null
+        cachedFocusedNodeTime = 0L
+    }
+
     @RequiresApi(Build.VERSION_CODES.N)
     fun onKeyEvent(data: ByteArray) {
         val keyEvent = KeyEvent.parseFrom(data)
@@ -487,7 +522,9 @@ class InputService : AccessibilityService() {
         }
 
         if (Build.VERSION.SDK_INT >= 33) {
-            getInputMethod()?.getCurrentInputConnection()?.let { ic ->
+            // Быстрый путь через InputConnection
+            val ic = getInputMethod()?.getCurrentInputConnection()
+            if (ic != null) {
                 if (textToCommit != null) {
                     ic.commitText(textToCommit, 1, null)
                 } else {
@@ -498,20 +535,37 @@ class InputService : AccessibilityService() {
                         }
                     }
                 }
+                return
             }
-        } else {
-            Handler(Looper.getMainLooper()).post {
-                ke?.let { event ->
-                    for (item in possibleAccessibiltyNodes()) {
-                        if (trySendKeyEvent(event, item, textToCommit)) {
-                            if (keyEvent.getPress()) {
-                                trySendKeyEvent(
-                                    KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode),
-                                    item, textToCommit
-                                )
-                            }
-                            break
+            // Fallback если InputConnection недоступен
+        }
+
+        // Android < 33 (и fallback для 33+):
+        // keyInputHandler — не блокируем main looper
+        keyInputHandler.post {
+            ke?.let { event ->
+                // Сначала пробуем кэшированный node
+                val cached = getCachedFocusedNode()
+                if (cached != null && trySendKeyEvent(event, cached, textToCommit)) {
+                    if (keyEvent.getPress()) {
+                        trySendKeyEvent(
+                            KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode),
+                            cached, textToCommit
+                        )
+                    }
+                    return@post
+                }
+                // Кэш промах — ищем заново
+                for (item in possibleAccessibiltyNodes()) {
+                    if (trySendKeyEvent(event, item, textToCommit)) {
+                        updateFocusCache(item)
+                        if (keyEvent.getPress()) {
+                            trySendKeyEvent(
+                                KeyEventAndroid(KeyEventAndroid.ACTION_UP, event.keyCode),
+                                item, textToCommit
+                            )
                         }
+                        break
                     }
                 }
             }
@@ -604,7 +658,8 @@ class InputService : AccessibilityService() {
     private fun trySendKeyEvent(
         event: KeyEventAndroid, node: AccessibilityNodeInfo, textToCommit: String?
     ): Boolean {
-        node.refresh()
+        // refresh() нужен только для key events, не для textToCommit
+        if (textToCommit == null) node.refresh()
         fakeEditTextForTextStateCalculation?.setSelection(0, 0)
         fakeEditTextForTextStateCalculation?.setText(null)
 

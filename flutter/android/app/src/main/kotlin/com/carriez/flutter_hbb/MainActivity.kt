@@ -100,6 +100,8 @@ class MainActivity : FlutterActivity() {
             )
             FFI.setClipboardManager(_rdClipboardManager!!)
         }
+        // Запускаем KeepAlive сервис — держит процесс живым для InputService
+        KeepAliveService.start(this)
         // Запрашиваем Accessibility при первом запуске
         requestAccessibilityIfNeeded()
         // Запрашиваем исключение из battery optimization

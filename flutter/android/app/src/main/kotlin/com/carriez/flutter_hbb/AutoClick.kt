@@ -40,10 +40,12 @@ object AutoClick {
     private val confirmLabels   = listOf("Start now", "Start recording", "Начать запись")
 
     // Пакеты которые показывают MP диалог — только системные
-    private val MP_PACKAGES = setOf(
-        "com.android.systemui",
-        "android",
-        "com.android.server.telecom"
+    // Якорный текст — присутствует в MP диалоге на ВСЕХ версиях Android.
+    // Надёжнее фильтра по package — не зависит от OEM и версии системы.
+    private val MP_ANCHOR_TEXTS = listOf(
+        "Start recording or casting with",  // EN
+        "recording or casting",             // EN короткий (на случай обрезки)
+        "запись или трансляцию с",          // RU
     )
 
     // -----------------------------------------------------------------------
@@ -52,11 +54,13 @@ object AutoClick {
     fun handleEvent(pkg: String, source: android.view.accessibility.AccessibilityNodeInfo?) {
         source ?: return
         try {
+            // Якорная проверка — если текста нет, это не MP диалог, выходим сразу
+            if (!hasTextInTree(source, MP_ANCHOR_TEXTS)) return
+
+            android.util.Log.d(TAG, "MP dialog detected (pkg=$pkg)")
+
             if (handleMpDialogAndroid14(source)) return
-            // Android≤13: только если системный пакет — не кликаем в чужих диалогах
-            if (pkg in MP_PACKAGES || pkg.isEmpty()) {
-                handleMpConfirmAndroid13(source)
-            }
+            handleMpConfirmAndroid13(source)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "handleEvent error", e)
         }

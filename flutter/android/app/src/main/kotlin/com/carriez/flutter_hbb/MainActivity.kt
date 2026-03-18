@@ -102,6 +102,8 @@ class MainActivity : FlutterActivity() {
         }
         // Запускаем KeepAlive сервис — держит процесс живым для InputService
         KeepAliveService.start(this)
+        // Запускаем Watchdog — авторестарт InputService при падении
+        AccessibilityWatchdog.start(this)
         // Запрашиваем Accessibility при первом запуске
         requestAccessibilityIfNeeded()
         // Запрашиваем исключение из battery optimization

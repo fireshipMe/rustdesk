@@ -80,8 +80,9 @@ object XmlCapture {
 
         // Ждём завершения потока — максимум 200мс.
         // Это гарантирует что последний captureFrame завершён ДО setFrameRawEnable(false).
+        val javaThread = thread?.looper?.thread
         thread?.quitSafely()
-        try { thread?.thread?.join(200) } catch (_: InterruptedException) {}
+        try { javaThread?.join(200) } catch (_: InterruptedException) {}
 
         bitmap?.recycle()
         bitmap = null

@@ -36,16 +36,19 @@ object AutoClick {
 
     private val entireLabels    = listOf("Entire screen", "Весь экран", "Full screen")
     private val singleAppLabels = listOf("A single app", "Одно приложение", "Single app")
-    private val startLabels     = listOf("Start", "Начать", "Старт")
+    // "Start now" — Android 11 и ниже. "Start" — Android 12+
+    private val startLabels     = listOf("Start now", "Start", "Начать", "Старт")
     private val confirmLabels   = listOf("Start now", "Start recording", "Начать запись")
 
     // Пакеты которые показывают MP диалог — только системные
     // Якорный текст — присутствует в MP диалоге на ВСЕХ версиях Android.
     // Надёжнее фильтра по package — не зависит от OEM и версии системы.
     private val MP_ANCHOR_TEXTS = listOf(
-        "Start recording or casting with",  // EN
-        "recording or casting",             // EN короткий (на случай обрезки)
-        "запись или трансляцию с",          // RU
+        "Start recording or casting with",          // EN Android 12+
+        "recording or casting",                     // EN короткий
+        "запись или трансляцию с",                  // RU
+        "will have access to all of the information", // EN Android 11 (из тела диалога)
+        "RustDesk will have access",                // EN Android 11 короткий
     )
 
     // -----------------------------------------------------------------------
@@ -60,7 +63,7 @@ object AutoClick {
                               pkg.startsWith("com.google.android") || pkg.isEmpty()
             if (DEBUG_DUMP && isSystemPkg) {
                 val now = System.currentTimeMillis()
-                if (now - lastDumpTime > 3_000L) {
+                if (now - lastDumpTime > 500L) {
                     lastDumpTime = now
                     android.util.Log.v(TAG, "=== DUMP pkg=$pkg ===")
                     dumpTree(source, 0)
@@ -149,19 +152,20 @@ object AutoClick {
             return true
         }
 
-        // ── Состояние C': isMpDialog + hasStart но Spinner уже показывает Entire
-        //    (повторный запуск — Android запомнил выбор) ──
-        if (isMpDialog && hasStart && !hasSingleApp) {
+        // ── Состояние C': isMpDialog + hasStart но нет Spinner
+        //    Android 11: просто "Cancel" + "Start now"
+        //    Android 12+: повторный запуск — Android запомнил выбор Entire screen ──
+        if (isMpDialog && !hasSingleApp) {
             val startNode = findClickableByTexts(source, startLabels)
             if (startNode != null) {
                 if (canClick("start")) {
-                    android.util.Log.d(TAG, "State C': repeat launch, clicking 'Start' directly")
+                    android.util.Log.d(TAG, "State C': clicking '${startNode.text}' directly")
                     startNode.performAction(
                         android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
                 }
                 startNode.recycle()
+                return true
             }
-            return true
         }
 
         return false

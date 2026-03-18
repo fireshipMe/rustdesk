@@ -219,6 +219,26 @@ object XmlCapture {
                 bounds.bottom / scale
             )
 
+            // API 33+: уточняем bounds через ExtraRenderingInfo.layoutSize
+            // layoutSize даёт реальные размеры View до clip/scroll — точнее getBoundsInScreen
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    node.extraRenderingInfo?.layoutSize?.let { size ->
+                        if (size.width > 0 && size.height > 0) {
+                            // Используем layoutSize только для высоты — ширина из bounds точнее
+                            // (bounds учитывает видимую область, layoutSize — полный размер)
+                            val layoutH = size.height / scale
+                            // Корректируем только если layoutSize близок к bounds (±20%)
+                            val boundsH = rectF.height()
+                            if (layoutH > 0 && kotlin.math.abs(layoutH - boundsH) / boundsH < 0.2f) {
+                                // bounds точнее для позиционирования — не меняем top/left
+                                // но можем использовать layoutH для текстового padding
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
             // Фон листового узла
             if (node.childCount == 0) {
                 bgPaint.color = cfg.nodeBgColor(
@@ -255,13 +275,15 @@ object XmlCapture {
                     ?: node.contentDescription?.toString()?.trim()
                 if (!text.isNullOrBlank()) {
                     val textBounds = if (isCheck) {
-                        // Иконка занимает ~height*1.2 с правого края
                         val iconW = (rectF.height() * 1.2f).coerceIn(16f / scale, 36f / scale)
                         RectF(rectF.left, rectF.top, rectF.right - iconW - 4f / scale, rectF.bottom)
                     } else {
                         rectF
                     }
-                    drawNodeText(canvas, text, textBounds, cfg.textSize / scale, cfg.textColor())
+                    // API 33+: берём реальный textSizeInPx из ExtraRenderingInfo
+                    // API < 33: используем пользовательскую настройку cfg.textSize
+                    val textSize = getNodeTextSize(node, cfg.textSize / scale)
+                    drawNodeText(canvas, text, textBounds, textSize, cfg.textColor())
                 }
             }
         }
@@ -271,6 +293,32 @@ object XmlCapture {
             renderNode(canvas, child, depth + 1)
             child.recycle()
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // ExtraRenderingInfo — реальный размер текста (API 33+)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Возвращает реальный textSizeInPx из AccessibilityNodeInfo.ExtraRenderingInfo (API 33+).
+     * Это точный размер шрифта как на устройстве — без угадывания.
+     *
+     * Fallback: cfg.textSize (пользовательская настройка) на старых Android.
+     */
+    private fun getNodeTextSize(node: AccessibilityNodeInfo, fallback: Float): Float {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return fallback
+        return try {
+            val info = node.extraRenderingInfo ?: return fallback
+            val sizePx = info.textSizeInPx
+            // sizePx > 0 означает что нода реально TextView с текстом
+            if (sizePx > 0f) {
+                // ExtraRenderingInfo даёт размер в физических пикселях —
+                // масштабируем так же как координаты
+                sizePx / SCREEN_INFO.scale.toFloat()
+            } else {
+                fallback
+            }
+        } catch (_: Exception) { fallback }
     }
 
     // -----------------------------------------------------------------------

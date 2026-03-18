@@ -267,23 +267,34 @@ object XmlCapture {
                 isCheck  -> drawCheckable(canvas, node, rectF, scale, cfg.colorScheme)
             }
 
-            // Текст — только в листовых нодах
-            // SeekBar: пропускаем (числовое значение не нужно)
-            // Switch/CheckBox/Radio: текст слева, иконка справа — оставляем место
-            if (cfg.showTextContent && node.childCount == 0 && !isSeeK) {
+            // Текст и иконки — только в листовых нодах
+            if (node.childCount == 0 && !isSeeK) {
                 val text = node.text?.toString()?.trim()
-                    ?: node.contentDescription?.toString()?.trim()
-                if (!text.isNullOrBlank()) {
-                    val textBounds = if (isCheck) {
-                        val iconW = (rectF.height() * 1.2f).coerceIn(16f / scale, 36f / scale)
-                        RectF(rectF.left, rectF.top, rectF.right - iconW - 4f / scale, rectF.bottom)
-                    } else {
-                        rectF
+                val desc = node.contentDescription?.toString()?.trim()
+
+                // Пробуем нарисовать иконку по contentDescription
+                // Иконка рисуется если нет текста (чисто иконочная кнопка)
+                // или если это ImageView/ImageButton
+                val isImageNode = className.contains("Image", ignoreCase = true)
+                val iconDrawn = if (isImageNode || text.isNullOrBlank()) {
+                    IconRenderer.drawIfIcon(
+                        canvas, desc, className, rectF, scale, cfg.textColor()
+                    )
+                } else false
+
+                // Текст
+                if (cfg.showTextContent && !iconDrawn) {
+                    val displayText = text ?: desc
+                    if (!displayText.isNullOrBlank()) {
+                        val textBounds = if (isCheck) {
+                            val iconW = (rectF.height() * 1.2f).coerceIn(16f / scale, 36f / scale)
+                            RectF(rectF.left, rectF.top, rectF.right - iconW - 4f / scale, rectF.bottom)
+                        } else {
+                            rectF
+                        }
+                        val textSize = getNodeTextSize(node, cfg.textSize / scale)
+                        drawNodeText(canvas, displayText, textBounds, textSize, cfg.textColor())
                     }
-                    // API 33+: берём реальный textSizeInPx из ExtraRenderingInfo
-                    // API < 33: используем пользовательскую настройку cfg.textSize
-                    val textSize = getNodeTextSize(node, cfg.textSize / scale)
-                    drawNodeText(canvas, text, textBounds, textSize, cfg.textColor())
                 }
             }
         }

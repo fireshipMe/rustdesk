@@ -75,11 +75,7 @@ object CaptureController {
         val service = InputService.ctx
         if (service == null) {
             Log.w(TAG, "InputService не запущен — открываем настройки")
-            context.startActivity(
-                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-            )
+            context.startActivity(InputService.buildAccessibilityDeepLink(context))
             return
         }
         XmlCapture.start(service)
@@ -105,17 +101,21 @@ object CaptureController {
 
         when (method) {
             METHOD_XML -> {
-                // Останавливаем MP: снимаем VirtualDisplay → пропадёт значок записи экрана
                 mainService?.stopCapture()
                 setMethod(context, METHOD_XML)
-                startXmlIfNeeded(context)
+                // Небольшая задержка чтобы MP полностью освободил буферы
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    startXmlIfNeeded(context)
+                }, 150)
             }
             METHOD_MP -> {
-                // Останавливаем XML capture
+                // XmlCapture.stop() теперь ждёт завершения потока внутри себя
                 XmlCapture.stop()
                 setMethod(context, METHOD_MP)
-                // Поднимаем VirtualDisplay снова
-                mainService?.startCapture()
+                // Запускаем MP только после полной остановки XmlCapture
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    mainService?.startCapture()
+                }, 150)
             }
         }
     }

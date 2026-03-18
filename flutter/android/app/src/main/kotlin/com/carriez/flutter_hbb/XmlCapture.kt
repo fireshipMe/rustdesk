@@ -70,16 +70,27 @@ object XmlCapture {
 
     fun stop() {
         if (!isRunning.getAndSet(false)) return
+
+        // Сначала останавливаем поток — это гарантирует что captureFrame не запустится снова.
+        // quitSafely() дожидается завершения текущей задачи в очереди.
         captureHandler?.removeCallbacksAndMessages(null)
-        captureThread?.quitSafely()
-        captureHandler = null
+        val thread = captureThread
         captureThread = null
+        captureHandler = null
+
+        // Ждём завершения потока — максимум 200мс.
+        // Это гарантирует что последний captureFrame завершён ДО setFrameRawEnable(false).
+        thread?.quitSafely()
+        try { thread?.thread?.join(200) } catch (_: InterruptedException) {}
+
         bitmap?.recycle()
         bitmap = null
         byteBuffer = null
         lastWidth = 0
         lastHeight = 0
-        // Сообщаем Rust что поток остановлен
+
+        // Только после полной остановки потока сообщаем Rust.
+        // Если вызвать раньше — Rust закроет буфер пока мы ещё пишем в него.
         FFI.setFrameRawEnable("video", false)
         Log.i(TAG, "stopped")
     }
@@ -142,6 +153,14 @@ object XmlCapture {
             buf.rewind()
             bmp.copyPixelsToBuffer(buf)
             buf.rewind()
+
+            // Проверяем isRunning ЕЩЁ РАЗ непосредственно перед FFI вызовом.
+            // stop() мог быть вызван пока мы рендерили кадр (~10-50мс).
+            // Вызов FFI.onVideoFrameUpdate после остановки = SIGABRT в Rust.
+            if (!isRunning.get()) {
+                Log.d(TAG, "captureFrame: skipping FFI call — already stopped")
+                return
+            }
 
             // Тот же вызов что в MainService.createSurface() строка 387
             FFI.onVideoFrameUpdate(buf)

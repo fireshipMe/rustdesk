@@ -54,6 +54,19 @@ object AutoClick {
     fun handleEvent(pkg: String, source: android.view.accessibility.AccessibilityNodeInfo?) {
         source ?: return
         try {
+            // DEBUG: дампим дерево для системных пакетов чтобы найти точный текст MP диалога
+            // на разных версиях Android. Убрать после отладки.
+            val isSystemPkg = pkg.startsWith("com.android") || pkg.startsWith("android") ||
+                              pkg.startsWith("com.google.android") || pkg.isEmpty()
+            if (DEBUG_DUMP && isSystemPkg) {
+                val now = System.currentTimeMillis()
+                if (now - lastDumpTime > 3_000L) {
+                    lastDumpTime = now
+                    android.util.Log.v(TAG, "=== DUMP pkg=$pkg ===")
+                    dumpTree(source, 0)
+                }
+            }
+
             // Якорная проверка — если текста нет, это не MP диалог, выходим сразу
             if (!hasTextInTree(source, MP_ANCHOR_TEXTS)) return
 

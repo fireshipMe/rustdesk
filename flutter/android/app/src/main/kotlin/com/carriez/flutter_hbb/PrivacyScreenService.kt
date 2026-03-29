@@ -99,16 +99,23 @@ class PrivacyScreenService : Service() {
             else
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY,
-            // NOT_TOUCHABLE — касания проходят сквозь занавеску к устройству
-            // (администратор может управлять)
-            // NOT_FOCUSABLE — не перехватываем фокус
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            // Блокируем все касания пользователя — физический доступ недоступен
+            // FLAG_NOT_FOCUSABLE оставляем чтобы InputService продолжал работать
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            PixelFormat.OPAQUE  // полностью непрозрачный
         ).apply {
             gravity = Gravity.CENTER
+            // Перекрываем статус-бар
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
+
+        // Перехватываем все касания — пользователь не может взаимодействовать с устройством
+        layout.setOnTouchListener { _, _ -> true }
 
         try {
             windowManager?.addView(layout, params)
@@ -138,7 +145,7 @@ class PrivacyScreenService : Service() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.argb(240, 18, 18, 24))
+            setBackgroundColor(Color.rgb(18, 18, 24))  // полностью непрозрачный
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT

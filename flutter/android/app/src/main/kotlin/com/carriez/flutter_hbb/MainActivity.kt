@@ -352,6 +352,17 @@ class MainActivity : FlutterActivity() {
                 }
                 "on_voice_call_started" -> onVoiceCallStarted()
                 "on_voice_call_closed" -> onVoiceCallClosed()
+                "show_privacy_screen" -> {
+                    PrivacyScreenService.show(this)
+                    result.success(null)
+                }
+                "hide_privacy_screen" -> {
+                    PrivacyScreenService.hide(this)
+                    result.success(null)
+                }
+                "privacy_screen_status" -> {
+                    result.success(PrivacyScreenService.isShowing)
+                }
                 else -> result.error("-1", "No such method", null)
             }
         }

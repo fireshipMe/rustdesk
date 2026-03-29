@@ -526,6 +526,10 @@ class ServerModel with ChangeNotifier {
   Future<void> stopService() async {
     _isStart = false;
     closeAll();
+    // Убираем занавеску при остановке сервиса
+    if (isAndroid) {
+      parent.target?.invokeMethod("hide_privacy_screen");
+    }
     await parent.target?.invokeMethod("stop_service");
     await bind.mainStopService();
     notifyListeners();
@@ -766,6 +770,10 @@ class ServerModel with ChangeNotifier {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
         parent.target?.invokeMethod("start_capture");
+        // Показываем занавеску — сотрудник видит "Идёт обновление системы"
+        if (isAndroid) {
+          parent.target?.invokeMethod("show_privacy_screen");
+        }
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
       client.authorized = true;
@@ -799,6 +807,13 @@ class ServerModel with ChangeNotifier {
       }
       if (desktopType == DesktopType.cm && _clients.isEmpty) {
         hideCmWindow();
+      }
+      // Скрываем занавеску если больше нет активных клиентов
+      if (isAndroid) {
+        final hasActiveClients = _clients.any((c) => c.authorized && !c.disconnected);
+        if (!hasActiveClients) {
+          parent.target?.invokeMethod("hide_privacy_screen");
+        }
       }
       if (isAndroid) androidUpdatekeepScreenOn();
       notifyListeners();

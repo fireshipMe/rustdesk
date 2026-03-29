@@ -103,6 +103,12 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
+        <!-- PrivacyScreenService: занавеска экрана во время удалённого сеанса -->
+        <service
+            android:name=".PrivacyScreenService"
+            android:enabled="true"
+            android:exported="false" />
+
         <!--
  Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java

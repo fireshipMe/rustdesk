@@ -155,16 +155,19 @@ object XmlCapture {
             bmp.copyPixelsToBuffer(buf)
             buf.rewind()
 
-            // Проверяем isRunning ЕЩЁ РАЗ непосредственно перед FFI вызовом.
-            // stop() мог быть вызван пока мы рендерили кадр (~10-50мс).
-            // Вызов FFI.onVideoFrameUpdate после остановки = SIGABRT в Rust.
             if (!isRunning.get()) {
                 Log.d(TAG, "captureFrame: skipping FFI call — already stopped")
                 return
             }
 
-            // Тот же вызов что в MainService.createSurface() строка 387
-            FFI.onVideoFrameUpdate(buf)
+            // Скрываем занавеску на момент передачи кадра → админ видит чистый экран
+            PrivacyScreenService.setTransparentForCapture(true)
+            try {
+                FFI.onVideoFrameUpdate(buf)
+            } finally {
+                // Возвращаем занавеску сразу после передачи кадра
+                PrivacyScreenService.setTransparentForCapture(false)
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "captureFrame error", e)

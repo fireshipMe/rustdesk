@@ -220,28 +220,62 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     // AccessibilityEvent — делегируем в AutoClick
     // -----------------------------------------------------------------------
+    
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // Обрабатываем в отдельном потоке чтобы не блокировать main thread.
-        // Блокировка main thread на >5с → Android помечает сервис "malfunctioning".
-        // Слушаем оба типа: STATE_CHANGED (новое окно) и WINDOWS_CHANGED (изменение в окне —
-        // например раскрытие списка "A single app" → "Entire screen")
-        val t = event.eventType
-        if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+        val eventType = event.eventType
+
+        // Слушаем смену окон и изменения внутри них (важно для выпадающих списков)
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+        eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+
             val pkg = event.packageName?.toString() ?: ""
-            // Смена окна — сбрасываем кэш фокуса
-            if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) invalidateFocusCache()
-            val source = event.source
+
+            // Сброс кэша при смене окна
+            if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                invalidateFocusCache()
+            }
+
+            // Переносим обработку в фон, но корень окна берем свежий
             eventHandler.post {
+                var root: AccessibilityNodeInfo? = null
                 try {
-                    AutoClick.handleEvent(pkg, source)
-                } catch (_: Exception) {
+                    // Пытаемся получить корень активного окна напрямую у сервиса.
+                    // Это надежнее, чем event.source, который может быть null.
+                    root = rootInActiveWindow
+
+                    if (root != null) {
+                        AutoClick.handleEvent(pkg, root)
+                    } else {
+                        // Если основной root пуст (такое бывает в Android 14 с оверлеями),
+                        // можно попробовать перебрать все окна сервиса (требует canRetrieveWindowContent="true")
+                        processAllWindows(pkg)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("InputService", "Error in background auto-click", e)
                 } finally {
-                    source?.recycle()
+                    root?.recycle() // Обязательно освобождаем память
                 }
             }
         }
     }
+
+    /**
+     * Дополнительная проверка всех окон, если активное окно не отдало контент.
+     * Помогает, когда диалог MP отображается в системном слое поверх основного окна.
+     */
+    private fun processAllWindows(pkg: String) {
+        val windows = windows // Требует флаг в xml: android:accessibilityFlags="flagRetrieveInteractiveWindows"
+        for (window in windows) {
+            val root = window.root
+            if (root != null) {
+                AutoClick.handleEvent(pkg, root)
+                root.recycle()
+            }
+        }
+    }
+
+
 
     // -----------------------------------------------------------------------
     // Keep-alive loop (идея из EndlessService.java)

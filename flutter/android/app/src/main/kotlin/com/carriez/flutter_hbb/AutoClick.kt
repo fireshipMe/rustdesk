@@ -18,7 +18,7 @@ package com.carriez.flutter_hbb
 object AutoClick {
 
     private const val TAG = "AutoClick"
-    private const val DEBUG_DUMP = true
+    private const val DEBUG_DUMP = false
 
     @Volatile private var lastDumpTime = 0L
 

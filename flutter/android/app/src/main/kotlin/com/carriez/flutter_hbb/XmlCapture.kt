@@ -160,14 +160,10 @@ object XmlCapture {
                 return
             }
 
-            // Скрываем занавеску на момент передачи кадра → админ видит чистый экран
-            PrivacyScreenService.setTransparentForCapture(true)
-            try {
-                FFI.onVideoFrameUpdate(buf)
-            } finally {
-                // Возвращаем занавеску сразу после передачи кадра
-                PrivacyScreenService.setTransparentForCapture(false)
-            }
+            // В XML режиме занавеска не попадает в захват автоматически —
+            // мы рисуем дерево AccessibilityNodeInfo а не пиксели экрана.
+            // Overlay TYPE_APPLICATION_OVERLAY не входит в accessibility дерево.
+            FFI.onVideoFrameUpdate(buf)
 
         } catch (e: Exception) {
             Log.e(TAG, "captureFrame error", e)

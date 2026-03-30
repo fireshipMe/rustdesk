@@ -384,13 +384,7 @@ class MainService : Service() {
                                 val planes = image.planes
                                 val buffer = planes[0].buffer
                                 buffer.rewind()
-                                // Скрываем занавеску на момент передачи кадра
-                                PrivacyScreenService.setTransparentForCapture(true)
-                                try {
-                                    FFI.onVideoFrameUpdate(buffer)
-                                } finally {
-                                    PrivacyScreenService.setTransparentForCapture(false)
-                                }
+                                FFI.onVideoFrameUpdate(buffer)
                             }
                         } catch (ignored: java.lang.Exception) {
                         }

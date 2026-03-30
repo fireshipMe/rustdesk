@@ -770,8 +770,8 @@ class ServerModel with ChangeNotifier {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
         parent.target?.invokeMethod("start_capture");
-        // Показываем занавеску — сотрудник видит "Идёт обновление системы"
-        if (isAndroid) {
+        // Занавеска только в XML режиме — MP захватывает overlay, не скрыть
+        if (isAndroid && _captureMethod == 'xml') {
           parent.target?.invokeMethod("show_privacy_screen");
         }
       }

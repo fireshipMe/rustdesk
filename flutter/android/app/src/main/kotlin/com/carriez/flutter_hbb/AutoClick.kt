@@ -87,83 +87,83 @@ object AutoClick {
     // -----------------------------------------------------------------------
 
     private fun handleMpDialogAndroid14(
-      source: android.view.accessibility.AccessibilityNodeInfo
+        source: android.view.accessibility.AccessibilityNodeInfo
     ): Boolean {
-      val hasSingleApp    = hasTextInTree(source, singleAppLabels)
-      val hasEntireScreen = hasTextInTree(source, entireLabels)
-      val hasStart        = hasTextInTree(source, startLabels)
-      val isMpDialog      = hasTextInTree(source, MP_TITLE_HINTS)
+        val hasSingleApp    = hasTextInTree(source, singleAppLabels)
+        val hasEntireScreen = hasTextInTree(source, entireLabels)
+        val hasStart        = hasTextInTree(source, startLabels)
+        val isMpDialog      = hasTextInTree(source, MP_TITLE_HINTS)
 
-      // Не наш диалог — быстрый выход
-      if (!isMpDialog && !hasSingleApp && !hasEntireScreen) return false
+        // Не наш диалог — быстрый выход
+        if (!isMpDialog && !hasSingleApp && !hasEntireScreen) return false
 
-      // Debug dump — оставляем как есть
-      if (DEBUG_DUMP) {
-        val now = System.currentTimeMillis()
-        if (now - lastDumpTime > 10_000L) {
-          lastDumpTime = now
-          android.util.Log.v(TAG, "=== DUMP isMpDialog=$isMpDialog hasSingle=$hasSingleApp hasEntire=$hasEntireScreen ===")
-          dumpTree(source, 0)
+        // Debug dump — оставляем как есть
+        if (DEBUG_DUMP) {
+            val now = System.currentTimeMillis()
+            if (now - lastDumpTime > 10_000L) {
+                lastDumpTime = now
+                android.util.Log.v(TAG, "=== DUMP isMpDialog=$isMpDialog hasSingle=$hasSingleApp hasEntire=$hasEntireScreen ===")
+                dumpTree(source, 0)
+            }
         }
-      }
 
-      // 1. ПРИОРИТЕТ: Если "Entire screen" уже выбран (нет "Single app") и есть кнопка "Start"
-      // Это конечное состояние перед нажатием на запуск.
-      if (hasEntireScreen && !hasSingleApp && hasStart) {
-        val startNode = findClickableByTexts(source, startLabels)
-        if (startNode != null) {
-          if (canClick("start")) {
-            android.util.Log.d(TAG, "State C: clicking 'Start'")
-            startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-          }
-          startNode.recycle()
-          return true
+        // 1. ПРИОРИТЕТ: Если "Entire screen" уже выбран (нет "Single app") и есть кнопка "Start"
+        // Это конечное состояние перед нажатием на запуск.
+        if (hasEntireScreen && !hasSingleApp && hasStart) {
+            val startNode = findClickableByTexts(source, startLabels)
+            if (startNode != null) {
+                if (canClick("start")) {
+                    android.util.Log.d(TAG, "State C: clicking 'Start'")
+                    startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                startNode.recycle()
+                return true
+            }
         }
-      }
 
-      // 2. ПРИОРИТЕТ: Если список РАСКРЫТ (видны оба варианта одновременно)
-      // В этом состоянии мы должны нажать именно на пункт "Entire screen".
-      if (hasEntireScreen && hasSingleApp) {
-        val entireNode = findClickableByTexts(source, entireLabels)
-        if (entireNode != null) {
-          // Проверяем, что это не сам Spinner (у спинера обычно текст меняется)
-          if (canClick("entire_screen_item")) {
-            android.util.Log.d(TAG, "State B: selecting 'Entire screen' from list")
-            entireNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-          }
-          entireNode.recycle()
-          return true
+        // 2. ПРИОРИТЕТ: Если список РАСКРЫТ (видны оба варианта одновременно)
+        // В этом состоянии мы должны нажать именно на пункт "Entire screen".
+        if (hasEntireScreen && hasSingleApp) {
+            val entireNode = findClickableByTexts(source, entireLabels)
+            if (entireNode != null) {
+                // Проверяем, что это не сам Spinner (у спинера обычно текст меняется)
+                if (canClick("entire_screen_item")) {
+                    android.util.Log.d(TAG, "State B: selecting 'Entire screen' from list")
+                    entireNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                entireNode.recycle()
+                return true
+            }
         }
-      }
 
-      // 3. ПРИОРИТЕТ: Если выбран "Single app" и списка еще НЕТ (нет "Entire screen")
-      // Это начальное состояние, нужно раскрыть Spinner.
-      if (hasSingleApp && !hasEntireScreen) {
-        val spinner = findClickableByTexts(source, singleAppLabels)
-        if (spinner != null) {
-          if (canClick("spinner_expand")) {
-            android.util.Log.d(TAG, "State A: expanding Spinner")
-            spinner.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-          }
-          spinner.recycle()
-          return true
+        // 3. ПРИОРИТЕТ: Если выбран "Single app" и списка еще НЕТ (нет "Entire screen")
+        // Это начальное состояние, нужно раскрыть Spinner.
+        if (hasSingleApp && !hasEntireScreen) {
+            val spinner = findClickableByTexts(source, singleAppLabels)
+            if (spinner != null) {
+                if (canClick("spinner_expand")) {
+                    android.util.Log.d(TAG, "State A: expanding Spinner")
+                    spinner.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                spinner.recycle()
+                return true
+            }
         }
-      }
 
-      // Резервный случай для Android 11-12 или когда выбор уже сделан системой
-      if (isMpDialog && hasStart && !hasSingleApp) {
-        val startNode = findClickableByTexts(source, startLabels)
-        if (startNode != null) {
-          if (canClick("start_direct")) {
-            android.util.Log.d(TAG, "State C': clicking Start directly")
-            startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-          }
-          startNode.recycle()
-          return true
+        // Резервный случай для Android 11-12 или когда выбор уже сделан системой
+        if (isMpDialog && hasStart && !hasSingleApp) {
+            val startNode = findClickableByTexts(source, startLabels)
+            if (startNode != null) {
+                if (canClick("start_direct")) {
+                    android.util.Log.d(TAG, "State C': clicking Start directly")
+                    startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                startNode.recycle()
+                return true
+            }
         }
-      }
 
-      return false
+        return false
     }
 
     // -----------------------------------------------------------------------

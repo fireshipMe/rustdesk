@@ -231,6 +231,14 @@ class InputService : AccessibilityService() {
 
             val pkg = event.packageName?.toString() ?: ""
 
+            val targetPackages = listOf(
+              "com.android.systemui",
+              "com.android.settings",
+              "com.carriez.flutter_hbb"
+            )
+
+            if (!targetPackages.contains(pkg)) return
+
             // Сброс кэша при смене окна
             if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 invalidateFocusCache()

@@ -770,8 +770,10 @@ class ServerModel with ChangeNotifier {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
         parent.target?.invokeMethod("start_capture");
-        // Занавеска только в XML режиме — MP захватывает overlay, не скрыть
-        if (isAndroid && _captureMethod == 'xml') {
+        // Занавеска в обоих режимах:
+        // XML: overlay не в accessibility дереве
+        // MP: setSkipScreenshot скрывает от захвата (Android 10+)
+        if (isAndroid) {
           parent.target?.invokeMethod("show_privacy_screen");
         }
       }

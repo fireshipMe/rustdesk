@@ -37,11 +37,9 @@ class PrivacyScreenService : Service() {
             private set
 
         fun show(context: Context) {
-            // Показываем ТОЛЬКО в XML режиме
-            if (CaptureController.activeMethod != CaptureController.METHOD_XML) {
-                Log.d(TAG, "show() skipped — not in XML mode (MP captures overlay)")
-                return
-            }
+            // Работает в обоих режимах:
+            // XML: overlay не попадает в accessibility дерево
+            // MP: setSkipScreenshot скрывает overlay от захвата (Android 10+)
             val intent = Intent(context, PrivacyScreenService::class.java).apply {
                 action = ACTION_SHOW
             }
@@ -124,9 +122,57 @@ class PrivacyScreenService : Service() {
             windowManager?.addView(layout, params)
             overlayView = layout
             isShowing = true
-            Log.i(TAG, "Privacy screen shown (XML mode)")
+            Log.i(TAG, "Privacy screen shown")
+            // Скрываем overlay от MP захвата через SurfaceControl.setSkipScreenshot
+            makeInvisibleToCapture(layout)
         } catch (e: Exception) {
             Log.e(TAG, "showOverlay failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Делает overlay невидимым для MediaProjection через Reflection.
+     * setSkipScreenshot — внутренний Android API, доступен на Android 10+ (Q).
+     * Сотрудник видит занавеску, RustDesk (MP) получает чистый экран.
+     */
+    private fun makeInvisibleToCapture(view: View) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Log.d(TAG, "setSkipScreenshot: Android < 10, skipping")
+            return
+        }
+        view.post {
+            try {
+                val getViewRootImpl = view.javaClass.getMethod("getViewRootImpl")
+                val viewRootImpl = getViewRootImpl.invoke(view) ?: run {
+                    Log.w(TAG, "getViewRootImpl returned null")
+                    return@post
+                }
+
+                val getSurfaceControl = viewRootImpl.javaClass.getMethod("getSurfaceControl")
+                val surfaceControl = getSurfaceControl.invoke(viewRootImpl) ?: run {
+                    Log.w(TAG, "getSurfaceControl returned null")
+                    return@post
+                }
+
+                val surfaceControlClass = Class.forName("android.view.SurfaceControl")
+                val transactionClass   = Class.forName("android.view.SurfaceControl\$Transaction")
+                val transaction = transactionClass.getConstructor().newInstance()
+
+                val setSkipScreenshot = transactionClass.getMethod(
+                    "setSkipScreenshot",
+                    surfaceControlClass,
+                    Boolean::class.javaPrimitiveType
+                )
+                setSkipScreenshot.invoke(transaction, surfaceControl, true)
+
+                val apply = transactionClass.getMethod("apply")
+                apply.invoke(transaction)
+
+                Log.i(TAG, "setSkipScreenshot=true — overlay hidden from MediaProjection")
+            } catch (e: Exception) {
+                Log.w(TAG, "setSkipScreenshot failed (may not be supported): ${e.message}")
+                // Не критично — работаем без этой функции
+            }
         }
     }
 

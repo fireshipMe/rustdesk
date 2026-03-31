@@ -220,70 +220,67 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     // AccessibilityEvent — делегируем в AutoClick
     // -----------------------------------------------------------------------
-    
-
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
 
-        // Слушаем смену окон и изменения внутри них (важно для выпадающих списков)
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-        eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
 
             val pkg = event.packageName?.toString() ?: ""
 
+            // Фильтр — обрабатываем только наши пакеты
             val targetPackages = listOf(
-              "com.android.systemui",
-              "com.android.settings",
-              "com.carriez.flutter_hbb"
+                "com.android.systemui",
+                "com.android.settings",
+                "com.carriez.flutter_hbb"
             )
-
-            if (!targetPackages.contains(pkg)) return
+            if (pkg.isNotEmpty() && !targetPackages.contains(pkg)) return
 
             // Сброс кэша при смене окна
             if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 invalidateFocusCache()
             }
 
-            // Переносим обработку в фон, но корень окна берем свежий
+            // Переносим в фон, используем rootInActiveWindow — надёжнее event.source
             eventHandler.post {
                 var root: AccessibilityNodeInfo? = null
                 try {
-                    // Пытаемся получить корень активного окна напрямую у сервиса.
-                    // Это надежнее, чем event.source, который может быть null.
                     root = rootInActiveWindow
-
                     if (root != null) {
                         AutoClick.handleEvent(pkg, root)
                     } else {
-                        // Если основной root пуст (такое бывает в Android 14 с оверлеями),
-                        // можно попробовать перебрать все окна сервиса (требует canRetrieveWindowContent="true")
+                        // Fallback — перебираем все окна (Android 14+ с оверлеями)
                         processAllWindows(pkg)
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("InputService", "Error in background auto-click", e)
+                    Log.e(logTag, "Error in background auto-click", e)
                 } finally {
-                    root?.recycle() // Обязательно освобождаем память
+                    root?.recycle()
                 }
             }
         }
     }
 
     /**
-     * Дополнительная проверка всех окон, если активное окно не отдало контент.
-     * Помогает, когда диалог MP отображается в системном слое поверх основного окна.
+     * Перебираем все окна если rootInActiveWindow вернул null.
+     * Помогает когда диалог MP отображается в системном слое поверх основного окна.
+     * Требует flagRetrieveInteractiveWindows в accessibility_service_config.xml
      */
     private fun processAllWindows(pkg: String) {
-        val windows = windows // Требует флаг в xml: android:accessibilityFlags="flagRetrieveInteractiveWindows"
-        for (window in windows) {
-            val root = window.root
-            if (root != null) {
-                AutoClick.handleEvent(pkg, root)
-                root.recycle()
+        try {
+            val wins = windows ?: return
+            for (window in wins) {
+                val root = window.root ?: continue
+                try {
+                    AutoClick.handleEvent(pkg, root)
+                } finally {
+                    root.recycle()
+                }
             }
+        } catch (e: Exception) {
+            Log.e(logTag, "processAllWindows error", e)
         }
     }
-
-
 
     // -----------------------------------------------------------------------
     // Keep-alive loop (идея из EndlessService.java)

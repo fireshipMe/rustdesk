@@ -37,9 +37,13 @@ class PrivacyScreenService : Service() {
             private set
 
         fun show(context: Context) {
-            // Работает в обоих режимах:
-            // XML: overlay не попадает в accessibility дерево
-            // MP: setSkipScreenshot скрывает overlay от захвата (Android 10+)
+            // Проверяем разрешение на overlay
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                !android.provider.Settings.canDrawOverlays(context)) {
+                Log.e(TAG, "show() failed — SYSTEM_ALERT_WINDOW not granted!")
+                Log.e(TAG, "Go to: Settings → Apps → RustDesk → Other permissions → Display pop-up windows → Allow")
+                return
+            }
             val intent = Intent(context, PrivacyScreenService::class.java).apply {
                 action = ACTION_SHOW
             }

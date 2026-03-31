@@ -104,6 +104,8 @@ class MainActivity : FlutterActivity() {
         KeepAliveService.start(this)
         // Запускаем Watchdog — авторестарт InputService при падении
         AccessibilityWatchdog.start(this)
+        // Запрашиваем разрешение на overlay (нужно для занавески)
+        requestOverlayPermissionIfNeeded()
         // Запрашиваем Accessibility при первом запуске
         requestAccessibilityIfNeeded()
         // Запрашиваем исключение из battery optimization
@@ -157,6 +159,41 @@ class MainActivity : FlutterActivity() {
         builder.setNegativeButton("Later") { dialog, which -> }
         builder.setCancelable(true)
         builder.show()
+    }
+
+    private fun requestOverlayPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (Settings.canDrawOverlays(this)) return
+
+        // На MIUI показываем диалог и открываем настройки
+        android.os.Handler(mainLooper).postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            val builder = android.app.AlertDialog.Builder(this)
+            builder.setTitle("Permission Required")
+            builder.setMessage(
+                "RustDesk needs permission to display over other apps.\n\n" +
+                "Please enable 'Display pop-up windows' in the next screen."
+            )
+            builder.setPositiveButton("Open Settings") { _, _ ->
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // Fallback для MIUI где стандартный intent может не работать
+                    try {
+                        val intent = Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+                            putExtra("extra_pkgname", packageName)
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+            }
+            builder.setNegativeButton("Later", null)
+            builder.show()
+        }, 1_500L) // После диалога Accessibility
     }
 
     private fun requestBatteryOptimizationExemption() {

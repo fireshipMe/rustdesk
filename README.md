@@ -1,7 +1,3 @@
-![Android CI](https://github.com/just-for-the-soul/rustdesk/workflows/Android%20CI/badge.svg)
-
-
-
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#raw-steps-to-build">Build</a> •

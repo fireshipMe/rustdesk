@@ -81,101 +81,58 @@ object AutoClick {
     // -----------------------------------------------------------------------
     // Android 14+ — stateless, три состояния
     // -----------------------------------------------------------------------
+    //
+
     private fun handleMpDialogAndroid14(
         source: android.view.accessibility.AccessibilityNodeInfo
     ): Boolean {
-        // ── Шаг 1: ищем Spinner по className ──
-        val spinner = findNodeByClassName(source, "android.widget.Spinner")
-
-        if (spinner != null) {
-            val spinnerText = spinner.text?.toString() ?: ""
-
-            // Спиннер показывает "Entire screen" — список закрыт, выбор сделан → Start
-            if (entireLabels.any { spinnerText.contains(it, ignoreCase = true) }) {
-                android.util.Log.d(TAG, "State C: Spinner='Entire screen', clicking Start")
-                spinner.recycle()
-                val startNode = findClickableByTexts(source, startLabels)
-                if (startNode != null && canClick("start")) {
-                    startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-                    startNode.recycle()
-                }
-                return true
-            }
-
-            // Ищем "Entire screen" как отдельный элемент — список уже раскрыт
-            val entireItem = findClickableByTexts(source, entireLabels)
-            if (entireItem != null) {
-                android.util.Log.d(TAG, "State B: List open, clicking 'Entire screen' item")
-                if (canClick("entire_item")) {
-                    entireItem.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-                }
-                entireItem.recycle()
-                spinner.recycle()
-                return true
-            }
-
-            // Список закрыт, спиннер не "Entire screen" → раскрываем
-            android.util.Log.d(TAG, "State A: Spinner text='$spinnerText', expanding")
-            if (canClick("spinner_open")) {
-                spinner.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-            }
-            spinner.recycle()
-            return true
-        }
-
-        // ── Шаг 2: нет спиннера — старый диалог (Android 11/12) ──
         val hasSingleApp    = hasTextInTree(source, singleAppLabels)
         val hasEntireScreen = hasTextInTree(source, entireLabels)
         val hasStart        = hasTextInTree(source, startLabels)
+        val isMpDialog      = hasTextInTree(source, MP_TITLE_HINTS)
 
-        // Список раскрыт — оба варианта видны
+        if (!isMpDialog && !hasSingleApp && !hasEntireScreen) return false
+
+        // 1. ПРИОРИТЕТ: Состояние B (Список раскрыт)
+        // Если видны ОБА текста — значит меню открыто. Нужно нажать на "Entire screen".
         if (hasEntireScreen && hasSingleApp) {
             val entireNode = findClickableByTexts(source, entireLabels)
             if (entireNode != null) {
-                android.util.Log.d(TAG, "State B_old: clicking 'Entire screen'")
-                if (canClick("entire_screen")) {
+                // Важно: проверяем, что это именно пункт списка, а не закрытый спиннер
+                if (canClick("entire_screen_item")) {
+                    android.util.Log.d(TAG, "State B: Clicking 'Entire screen' item in list")
                     entireNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
                 }
                 entireNode.recycle()
+                return true
             }
-            return true
         }
 
-        // Только "A single app" — раскрываем
-        if (hasSingleApp && !hasEntireScreen) {
-            val singleNode = findClickableByTexts(source, singleAppLabels)
-            if (singleNode != null) {
-                android.util.Log.d(TAG, "State A_old: expanding spinner")
-                if (canClick("spinner")) {
-                    singleNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-                }
-                singleNode.recycle()
-            }
-            return true
-        }
-
-        // "Entire screen" + Start — кликаем Start
+        // 2. ПРИОРИТЕТ: Состояние C (Выбор сделан, жмем Start)
+        // Если "Entire screen" выбран (hasEntire) и "Single app" исчез из видимости (список закрылся)
         if (hasEntireScreen && !hasSingleApp && hasStart) {
             val startNode = findClickableByTexts(source, startLabels)
             if (startNode != null) {
-                android.util.Log.d(TAG, "State C_old: clicking 'Start'")
                 if (canClick("start")) {
+                    android.util.Log.d(TAG, "State C: Clicking 'Start'")
                     startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
                 }
                 startNode.recycle()
+                return true
             }
-            return true
         }
 
-        // State C' — Android 11: просто Cancel + Start now
-        val startNode = findClickableByTexts(source, startLabels)
-        if (startNode != null) {
-            android.util.Log.d(TAG, "State C': clicking '${startNode.text}'")
-            if (canClick("start")) {
-                startNode.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+        // 3. Состояние A (Начало: Спиннер показывает "Single app", списка нет)
+        if (hasSingleApp && !hasEntireScreen) {
+            val spinner = findClickableByTexts(source, singleAppLabels)
+            if (spinner != null) {
+                if (canClick("spinner_expand")) {
+                    android.util.Log.d(TAG, "State A: Expanding Spinner")
+                    spinner.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                spinner.recycle()
+                return true
             }
-            startNode.recycle()
-            return true
         }
 
         return false

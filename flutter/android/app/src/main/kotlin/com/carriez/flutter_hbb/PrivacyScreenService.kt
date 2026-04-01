@@ -127,8 +127,10 @@ class PrivacyScreenService : Service() {
             overlayView = layout
             isShowing = true
             Log.i(TAG, "Privacy screen shown")
-            // Скрываем overlay от MP захвата через SurfaceControl.setSkipScreenshot
+            // Скрываем overlay от MP захвата через SurfaceControl.setSkipScreenshot (Android 10+)
             makeInvisibleToCapture(layout)
+            // Пересоздаём VirtualDisplay с OWN_CONTENT_ONLY чтобы overlay не попал в захват
+            MainService.instance?.recreateVirtualDisplay()
         } catch (e: Exception) {
             Log.e(TAG, "showOverlay failed: ${e.message}")
         }
@@ -188,6 +190,8 @@ class PrivacyScreenService : Service() {
         overlayView = null
         isShowing = false
         Log.i(TAG, "Privacy screen hidden")
+        // Возвращаем VirtualDisplay в режим AUTO_MIRROR без OWN_CONTENT_ONLY
+        MainService.instance?.recreateVirtualDisplay()
     }
 
     // -----------------------------------------------------------------------

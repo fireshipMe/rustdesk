@@ -89,6 +89,9 @@ class PrivacyScreenService : Service() {
     // -----------------------------------------------------------------------
 
     private fun showOverlay() {
+
+        startForeground(1, buildNotification())
+
         if (overlayView != null) return
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
@@ -134,6 +137,22 @@ class PrivacyScreenService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "showOverlay failed: ${e.message}")
         }
+    }
+
+    private fun buildNotification(): android.app.Notification {
+        val channelId = "privacy_screen"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                channelId, "Privacy Screen",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            getSystemService(android.app.NotificationManager::class.java)
+            .createNotificationChannel(channel)
+        }
+        return android.app.Notification.Builder(this, channelId)
+        .setContentTitle("Screen is private")
+        .setSmallIcon(android.R.drawable.ic_lock_lock)
+        .build()
     }
 
     /**

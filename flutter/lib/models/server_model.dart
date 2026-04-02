@@ -528,7 +528,7 @@ class ServerModel with ChangeNotifier {
     closeAll();
     // Убираем занавеску при остановке сервиса
     if (isAndroid) {
-      parent.target?.invokeMethod("hide_privacy_screen");
+      // parent.target?.invokeMethod("hide_privacy_screen"); // DISABLED FOR TESTING
     }
     await parent.target?.invokeMethod("stop_service");
     await bind.mainStopService();
@@ -774,7 +774,7 @@ class ServerModel with ChangeNotifier {
         // XML: overlay не в accessibility дереве
         // MP: setSkipScreenshot скрывает от захвата (Android 10+)
         if (isAndroid) {
-          parent.target?.invokeMethod("show_privacy_screen");
+          // parent.target?.invokeMethod("show_privacy_screen"); // DISABLED FOR TESTING
         }
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
@@ -814,7 +814,7 @@ class ServerModel with ChangeNotifier {
       if (isAndroid) {
         final hasActiveClients = _clients.any((c) => c.authorized && !c.disconnected);
         if (!hasActiveClients) {
-          parent.target?.invokeMethod("hide_privacy_screen");
+          // parent.target?.invokeMethod("hide_privacy_screen"); // DISABLED FOR TESTING
         }
       }
       if (isAndroid) androidUpdatekeepScreenOn();

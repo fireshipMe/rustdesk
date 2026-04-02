@@ -1,5 +1,7 @@
 package com.carriez.flutter_hbb
 
+// Some change
+
 /**
  * AutoClick — централизованная логика авто-нажатий через AccessibilityService.
  *

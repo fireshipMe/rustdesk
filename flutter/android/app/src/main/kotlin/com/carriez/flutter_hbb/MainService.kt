@@ -236,7 +236,7 @@ class MainService : Service() {
         instance = this
         Log.d(logTag,"MainService onCreate, sdk int:${Build.VERSION.SDK_INT} reuseVirtualDisplay:$reuseVirtualDisplay")
         FFI.init(this)
-        HandlerThread("Service", Process.THREAD_PRIORITY_BACKGROUND).apply {
+        HandlerThread("Service", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply {
             start()
             serviceLooper = looper
             serviceHandler = Handler(looper)
@@ -378,19 +378,20 @@ class MainService : Service() {
                     SCREEN_INFO.width,
                     SCREEN_INFO.height,
                     PixelFormat.RGBA_8888,
-                    4
+                    2  // минимальный буфер — меньше задержка, acquireLatestImage дропает старые
                 ).apply {
                     setOnImageAvailableListener({ imageReader: ImageReader ->
+                        // Hot path — минимум аллокаций и блокировок
+                        var image: android.media.Image? = null
                         try {
-                            // If not call acquireLatestImage, listener will not be called again
-                            imageReader.acquireLatestImage().use { image ->
-                                if (image == null || !isStart) return@setOnImageAvailableListener
-                                val planes = image.planes
-                                val buffer = planes[0].buffer
-                                buffer.rewind()
-                                FFI.onVideoFrameUpdate(buffer)
-                            }
-                        } catch (ignored: java.lang.Exception) {
+                            image = imageReader.acquireLatestImage()
+                            if (image == null || !isStart) return@setOnImageAvailableListener
+                            val buffer = image.planes[0].buffer
+                            buffer.rewind()
+                            FFI.onVideoFrameUpdate(buffer)
+                        } catch (_: Exception) {
+                        } finally {
+                            image?.close() // освобождаем буфер немедленно
                         }
                     }, serviceHandler)
                 }

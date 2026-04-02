@@ -32,7 +32,7 @@ lazy_static! {
     static ref CLIPBOARDS_CLIENT: Mutex<Option<MultiClipboards>> = Mutex::new(None);
 }
 
-const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(100);
+const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(33); // ~30fps, отбрасываем устаревшие кадры быстро
 const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(1000);
 
 struct FrameRaw {
@@ -82,13 +82,20 @@ impl FrameRaw {
             None
         } else {
             if self.last_update.elapsed() > self.timeout {
-                log::trace!("Failed to take {} raw,timeout!", self.name);
+                // Кадр устарел — сбрасываем и не отправляем
+                self.release();
                 return None;
             }
             let slice = unsafe { std::slice::from_raw_parts(ptr, self.len) };
             self.release();
-            if last.len() == slice.len() && crate::would_block_if_equal(last, slice).is_err() {
-                return None;
+            // Пропускаем would_block_if_equal для видео — это сравнение ~6MB RGBA
+            // занимает 2-5мс и добавляет задержку. Rust кодек сам определит
+            // изменился ли кадр через delta encoding.
+            // Для аудио оставляем проверку (буфер маленький).
+            if self.name == "audio" {
+                if last.len() == slice.len() && crate::would_block_if_equal(last, slice).is_err() {
+                    return None;
+                }
             }
             dst.resize(slice.len(), 0);
             unsafe {

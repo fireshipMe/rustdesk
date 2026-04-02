@@ -865,7 +865,13 @@ fn run(vs: VideoService) -> ResultType<()> {
         }
 
         let mut fetched_conn_ids = HashSet::new();
+        // Android: не ждём подтверждения от клиента — шлём следующий кадр сразу.
+        // Это push-only модель как в UDP играх.
+        // На десктопе оставляем ожидание (flow control важен для записи).
+        #[cfg(not(target_os = "android"))]
         let timeout_millis = 3_000u64;
+        #[cfg(target_os = "android")]
+        let timeout_millis = 0u64;
         let wait_begin = Instant::now();
         while wait_begin.elapsed().as_millis() < timeout_millis as _ {
             if vs.source.is_monitor() {
@@ -970,6 +976,11 @@ fn get_encoder_config(
     #[cfg(feature = "vram")]
     Encoder::update(scrap::codec::EncodingUpdate::Check);
     // https://www.wowza.com/community/t/the-correct-keyframe-interval-in-obs-studio/95162
+    // Android: keyframe каждые 2 секунды (~60 кадров при 30fps) — баланс задержки и bandwidth.
+    // Слишком частые I-frames увеличивают трафик, слишком редкие — задержку восстановления.
+    #[cfg(target_os = "android")]
+    let keyframe_interval = if record { Some(240) } else { Some(60) };
+    #[cfg(not(target_os = "android"))]
     let keyframe_interval = if record { Some(240) } else { None };
     let negotiated_codec = Encoder::negotiated_codec();
     match negotiated_codec {

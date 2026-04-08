@@ -1,0 +1,177 @@
+name: Build Android APK (armv7)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - new_main
+
+env:
+  RUST_VERSION: "1.75"
+  CARGO_NDK_VERSION: "3.1.2"
+  FLUTTER_VERSION: "3.24.5"
+  NDK_VERSION: "r27c"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VERSION: "1.4.5"
+
+jobs:
+  build-android-armv7:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: false
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        swap-storage: false
+
+    - name: Export GitHub Actions cache environment variables
+      uses: actions/github-script@v6
+      with:
+        script: |
+          core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+             clang cmake curl gcc-multilib git g++ g++-multilib \
+             libasound2-dev libc6-dev libclang-dev libgstreamer1.0-dev \
+             libgstreamer-plugins-base1.0-dev libgtk-3-dev libpulse-dev \
+             libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+             libxdo-dev libxfixes-dev llvm-dev nasm ninja-build \
+             openjdk-17-jdk-headless pkg-config wget
+
+    - name: Checkout source code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: "stable"
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+
+    - name: Patch Flutter
+      run: |
+        cd $(dirname $(dirname $(which flutter)))
+        [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff || true
+
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      id: setup-ndk
+      with:
+        ndk-version: ${{ env.NDK_VERSION }}
+        add-to-path: true
+
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        source $HOME/.cargo/env
+        rustup install ${{ env.RUST_VERSION }}
+        cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
+        cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
+
+    - name: Generate bridge files
+      run: |
+        source $HOME/.cargo/env
+        rustup default stable
+        cd flutter
+        flutter pub get
+        cd ..
+        flutter_rust_bridge_codegen \
+          --rust-input src/flutter_ffi.rs \
+          --dart-output flutter/lib/generated_bridge.dart \
+          --c-output flutter/macos/Runner/bridge_generated.h
+
+    - name: Setup vcpkg for armv7
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: /opt/artifacts/vcpkg-armv7
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+        doNotCache: false
+
+    - name: Install vcpkg dependencies for armv7
+      run: |
+        export VCPKG_ROOT=/opt/artifacts/vcpkg-armv7
+        if ! ./flutter/build_android_deps.sh "armeabi-v7a"; then
+          find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+            echo "$_1:"; cat "$_1"; done
+          exit 1
+        fi
+
+    - name: Build Rust library for armv7
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        VCPKG_ROOT: /opt/artifacts/vcpkg-armv7
+      run: |
+        source $HOME/.cargo/env
+        rustup default ${{ env.RUST_VERSION }}
+        rustup target add armv7-linux-androideabi
+
+        ./flutter/ndk_arm.sh
+
+        mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
+        cp ./target/armv7-linux-androideabi/release/liblibrustdesk.so \
+           ./flutter/android/app/src/main/jniLibs/armeabi-v7a/librustdesk.so
+        cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so \
+           ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
+
+    - name: Build armv7 APK
+      env:
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      run: |
+        export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
+
+        sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" ./flutter/android/gradle.properties
+        sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
+
+        cd flutter
+        flutter pub get
+        flutter build apk --release --target-platform android-arm
+
+        mkdir -p ../signed-apk
+        mv build/app/outputs/flutter-apk/app-release.apk \
+           ../signed-apk/rustdesk-${{ env.VERSION }}-armv7.apk
+
+    - name: Upload armv7 APK
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: rustdesk-${{ env.VERSION }}-armv7-apk
+        path: signed-apk/*.apk
+        retention-days: 7
+
+    - name: Upload armv7 native library
+      uses: actions/upload-artifact@v4
+      with:
+        name: rustdesk-${{ env.VERSION }}-armv7-lib
+        path: flutter/android/app/src/main/jniLibs/armeabi-v7a/
+        retention-days: 30
+
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "## armv7 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Artifacts:" >> $GITHUB_STEP_SUMMARY
+        echo "- **armv7 APK** - Ready to install on 32-bit ARM devices" >> $GITHUB_STEP_SUMMARY
+        echo "- **armv7 native lib** - librustdesk.so for armeabi-v7a" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        ls -lh signed-apk/*.apk 2>/dev/null || echo "APK not found"
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- Version: \`${{ env.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Rust: \`${{ env.RUST_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Flutter: \`${{ env.FLUTTER_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

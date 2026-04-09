@@ -871,7 +871,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         #[cfg(not(target_os = "android"))]
         let timeout_millis = 3_000u64;
         #[cfg(target_os = "android")]
-        let timeout_millis = 1_000u64;
+        let timeout_millis = 0u64;
         let wait_begin = Instant::now();
         while wait_begin.elapsed().as_millis() < timeout_millis as _ {
             if vs.source.is_monitor() {

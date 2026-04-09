@@ -223,20 +223,19 @@ class InputService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
 
-
-        val pkg = event.packageName?.toString() ?: ""
-
-        // Фильтр — обрабатываем только наши пакеты
-        val targetPackages = listOf(
-            "com.android.systemui",
-            "com.android.settings",
-            "com.carriez.flutter_hbb"
-        )
-        if (pkg.isNotEmpty() && !targetPackages.contains(pkg)) return
-
-
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+
+            val pkg = event.packageName?.toString() ?: ""
+
+            // Фильтр — обрабатываем только наши пакеты
+            val targetPackages = listOf(
+              "com.android.systemui",
+              "com.android.settings",
+              "com.carriez.flutter_hbb"
+            )
+
+            if (pkg.isNotEmpty() && !targetPackages.contains(pkg)) return
 
             // Сброс кэша при смене окна
             if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {

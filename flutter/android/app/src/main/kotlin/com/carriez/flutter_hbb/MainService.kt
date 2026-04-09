@@ -378,7 +378,7 @@ class MainService : Service() {
                     SCREEN_INFO.width,
                     SCREEN_INFO.height,
                     PixelFormat.RGBA_8888,
-                    4  // буфер 4 — при быстрых переходах/свайпах не теряем кадры анимации
+                    2  // буфер 4 — при быстрых переходах/свайпах не теряем кадры анимации
                 ).apply {
                     setOnImageAvailableListener({ imageReader: ImageReader ->
                         // Hot path — минимум аллокаций и блокировок

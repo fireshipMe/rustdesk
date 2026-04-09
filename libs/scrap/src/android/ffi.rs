@@ -32,8 +32,8 @@ lazy_static! {
     static ref CLIPBOARDS_CLIENT: Mutex<Option<MultiClipboards>> = Mutex::new(None);
 }
 
-const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(66); // два кадра при 30fps — успевает даже при переходах между окнами
-const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(1000);
+const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(33); // два кадра при 30fps — успевает даже при переходах между окнами
+const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 
 struct FrameRaw {
     name: &'static str,

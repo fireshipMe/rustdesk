@@ -94,8 +94,8 @@ object AutoClick {
     ): Boolean {
 
 
-      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
-        return
+      if (Build.VERSION.SDK_INT > 33) {
+        return false
       }
 
 
@@ -178,8 +178,8 @@ object AutoClick {
     ): Boolean {
 
 
-      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
-        return
+      if (Build.VERSION.SDK_INT > 33) {
+        return false
       }
 
 

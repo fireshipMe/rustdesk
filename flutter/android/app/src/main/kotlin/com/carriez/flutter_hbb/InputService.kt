@@ -222,7 +222,7 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
 
-      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
+      if (Build.VERSION.SDK_INT > 33) {
         return
       }
 

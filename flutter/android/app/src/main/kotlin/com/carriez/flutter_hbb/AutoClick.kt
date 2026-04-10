@@ -88,6 +88,13 @@ object AutoClick {
     private fun handleMpDialogAndroid14(
         source: android.view.accessibility.AccessibilityNodeInfo
     ): Boolean {
+
+
+      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
+        return
+      }
+
+
         val hasSingleApp    = hasTextInTree(source, singleAppLabels)
         val hasEntireScreen = hasTextInTree(source, entireLabels)
         val hasStart        = hasTextInTree(source, startLabels)
@@ -165,6 +172,13 @@ object AutoClick {
     private fun handleMpConfirmAndroid13(
         source: android.view.accessibility.AccessibilityNodeInfo
     ): Boolean {
+
+
+      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
+        return
+      }
+
+
         val node = findClickableByTexts(source, confirmLabels) ?: return false
         val label = node.text?.toString() ?: ""
         if (canClick("confirm_$label")) {

@@ -221,6 +221,13 @@ class InputService : AccessibilityService() {
     // AccessibilityEvent — делегируем в AutoClick
     // -----------------------------------------------------------------------
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+
+      if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
+        return
+      }
+
+
+
         val eventType = event.eventType
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||

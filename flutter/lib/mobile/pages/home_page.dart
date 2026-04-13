@@ -47,9 +47,17 @@ class HomePageState extends State<HomePage> {
 
   void initPages() {
     _pages.clear();
+    if (!bind.isIncomingOnly()) {
+      _pages.add(ConnectionPage(
+        appBarActions: [],
+      ));
+    }
     if (isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
-      _pages.addAll([ServerPage(), ChatPage(type: ChatPageType.mobileMain)]);
+      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
+      // Set ServerPage active by default
+      final serverIndex = _chatPageTabIndex + 1;
+      _selectedIndex = serverIndex;
     }
     _pages.add(SettingsPage());
   }

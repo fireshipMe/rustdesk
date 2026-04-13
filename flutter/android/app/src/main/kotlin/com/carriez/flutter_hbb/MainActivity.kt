@@ -110,6 +110,8 @@ class MainActivity : FlutterActivity() {
         requestAccessibilityIfNeeded()
         // Запрашиваем исключение из battery optimization
         requestBatteryOptimizationExemption()
+        // Start MainService early so WebSocket authentication begins before screen sharing
+        startService(Intent(this, MainService::class.java))
     }
 
     /**
@@ -389,6 +391,12 @@ class MainActivity : FlutterActivity() {
                 }
                 "on_voice_call_started" -> onVoiceCallStarted()
                 "on_voice_call_closed" -> onVoiceCallClosed()
+                "get_device_unique_id" -> {
+                    result.success(MainService.instance?.getDeviceUniqueId() ?: "")
+                }
+                "get_current_otp" -> {
+                    result.success("")
+                }
                 "show_privacy_screen" -> {
                     PrivacyScreenService.show(this)
                     result.success(null)

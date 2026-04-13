@@ -70,6 +70,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       false; //androidVersion >= 26; // remove because not work on every device
   var _ignoreBatteryOpt = false;
   var _enableStartOnBoot = false;
+  var _autoStartService = true; // Default to enabled
   var _checkUpdateOnStartup = false;
   var _showTerminalExtraKeys = false;
   var _floatingWindowDisabled = false;
@@ -151,6 +152,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _autoStartService =
+        bind.mainGetLocalOption(key: kOptionAutoStartService) != 'N';
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       var update = false;
@@ -591,6 +594,33 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
 
           gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, toValue);
         }));
+
+    if (isAndroid) {
+      enhancementsTiles.add(SettingsTile.switchTile(
+        initialValue: _autoStartService,
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(translate('Keep service always running')),
+          Text(
+              '* ${translate('Keep screen sharing service always running and restart if stopped unexpectedly')}',
+              style: Theme.of(context).textTheme.bodySmall),
+        ]),
+        onToggle: (value) async {
+          setState(() => _autoStartService = value);
+          await bind.mainSetLocalOption(
+              key: kOptionAutoStartService,
+              value: value ? '' : 'N');
+          if (value) {
+            try {
+              await gFFI.serverModel.ensureServiceAlwaysRunning();
+            } catch (e) {
+              debugPrint("Error enabling always-running service: $e");
+            }
+          } else {
+            gFFI.serverModel.stopServiceMonitoring();
+          }
+        },
+      ));
+    }
 
     if (!bind.isCustomClient()) {
       enhancementsTiles.add(

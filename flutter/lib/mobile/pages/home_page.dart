@@ -7,8 +7,6 @@ import '../../common.dart';
 import '../../common/widgets/chat_page.dart';
 import '../../models/platform_model.dart';
 import '../../models/state_model.dart';
-import 'connection_page.dart';
-
 abstract class PageShape extends Widget {
   final String title = "";
   final Widget icon = Icon(null);
@@ -47,11 +45,6 @@ class HomePageState extends State<HomePage> {
 
   void initPages() {
     _pages.clear();
-    if (!bind.isIncomingOnly()) {
-      _pages.add(ConnectionPage(
-        appBarActions: [],
-      ));
-    }
     if (isAndroid && !bind.isOutgoingOnly()) {
       _chatPageTabIndex = _pages.length;
       _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
@@ -66,9 +59,9 @@ class HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return WillPopScope(
         onWillPop: () async {
-          if (_selectedIndex != 0) {
+          if (_selectedIndex != _chatPageTabIndex + 1) {
             setState(() {
-              _selectedIndex = 0;
+              _selectedIndex = _chatPageTabIndex + 1;
             });
           } else {
             return true;
@@ -158,9 +151,6 @@ class HomePageState extends State<HomePage> {
 }
 
 class WebHomePage extends StatelessWidget {
-  final connectionPage =
-      ConnectionPage(appBarActions: <Widget>[const WebSettingsPage()]);
-
   @override
   Widget build(BuildContext context) {
     stateGlobal.isInMainPage = true;
@@ -170,9 +160,9 @@ class WebHomePage extends StatelessWidget {
       appBar: AppBar(
         centerTitle: true,
         title: Text("${bind.mainGetAppNameSync()} (Preview)"),
-        actions: connectionPage.appBarActions,
+        actions: const [WebSettingsPage()],
       ),
-      body: connectionPage,
+      body: const Center(child: SizedBox.shrink()),
     );
   }
 

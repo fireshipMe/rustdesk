@@ -349,6 +349,17 @@ class MainActivity : FlutterActivity() {
                     )
                     result.success(true)
                 }
+                "warmer_set_rustdesk_id" -> {
+                    // Persist the RustDesk peer ID for WarmerService to register with
+                    // the OpenClaw bridge as a uniquely-addressable device.
+                    val id = call.arguments as? String
+                    if (!id.isNullOrEmpty()) {
+                        context.getSharedPreferences(WarmerService.PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit().putString(WarmerService.PREFS_KEY_ID, id).apply()
+                    }
+                    result.success(true)
+                    return@setMethodCallHandler
+                }
                 "check_accessibility" -> {
                     result.success(isAccessibilityEnabled())
                 }

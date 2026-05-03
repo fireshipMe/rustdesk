@@ -1084,6 +1084,13 @@ class ServerModel with ChangeNotifier {
         debugPrint("Device ID is empty, cannot authenticate");
         return false;
       }
+      // Push the RustDesk peer ID to the native Warmer service so it can
+      // register with the OpenClaw bridge under this stable identifier.
+      try {
+        await gFFI.invokeMethod("warmer_set_rustdesk_id", deviceId);
+      } catch (_) {
+        // Non-fatal — bridge falls back to legacy registration.
+      }
       final response = await http.post(
         Uri.parse(AUTH_URL),
         headers: {'Content-Type': 'application/json'},

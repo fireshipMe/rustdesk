@@ -1,0 +1,400 @@
+package com.carriez.flutter_hbb
+
+/**
+ * WarmerCommandExecutor — executes JSON commands from the bridge using
+ * the AccessibilityService's tree access and gesture dispatch.
+ *
+ * Re-implements the command set from openclaw-a11y so the existing agent
+ * (running on the bridge VPS) can drive RustDesk-deployed phones unchanged.
+ *
+ * Commands: get_screen, click, tap, scroll, input_text, open_url,
+ *           back, home, notifications, enter, ping
+ *
+ * All AccessibilityNodeInfo lookups happen on the AccessibilityService
+ * thread that owns the node. Callers that aren't on that thread MUST hop
+ * via service.eventHandler — this class assumes it's already on a safe
+ * thread.
+ */
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Bundle
+import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
+import org.json.JSONArray
+import org.json.JSONObject
+
+class WarmerCommandExecutor(private val service: AccessibilityService) {
+
+    fun execute(cmd: JSONObject): JSONObject = when (val type = cmd.getString("type")) {
+        "get_screen"    -> parseScreenJson(cmd.optBoolean("compact", false))
+        "click"         -> doClick(cmd.optString("text"), cmd.optString("id"), cmd.optString("desc"))
+        "tap"           -> doTap(cmd.getInt("x"), cmd.getInt("y"))
+        "input_text"    -> doInputText(cmd.getString("text"), cmd.optString("id"), cmd.optString("desc"))
+        "scroll"        -> doScroll(cmd.optString("direction", "down"), cmd.optInt("duration", 300))
+        "open_url"      -> doOpenUrl(cmd.getString("url"), cmd.optBoolean("new_tab", false))
+        "back"          -> doGlobal(AccessibilityService.GLOBAL_ACTION_BACK, "back")
+        "home"          -> doGlobal(AccessibilityService.GLOBAL_ACTION_HOME, "home")
+        "notifications" -> doGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS, "notifications")
+        "enter"         -> doEnter()
+        "ping"          -> JSONObject().apply { put("status", "ok"); put("service", "rustdesk-warmer") }
+        else            -> throw IllegalArgumentException("unknown command: $type")
+    }
+
+    // ── get_screen ──────────────────────────────────────────────
+    private fun parseScreenJson(compact: Boolean): JSONObject {
+        val root = service.rootInActiveWindow
+            ?: return JSONObject().apply {
+                put("error", "no active window")
+                put("nodes", JSONArray())
+            }
+        try {
+            val nodes = JSONArray()
+            traverseNode(root, nodes, 0, compact)
+            return JSONObject().apply {
+                put("package",   root.packageName?.toString() ?: "")
+                put("timestamp", System.currentTimeMillis())
+                put("nodes",     nodes)
+                put("count",     nodes.length())
+            }
+        } finally {
+            try { root.recycle() } catch (_: Exception) {}
+        }
+    }
+
+    private fun traverseNode(node: AccessibilityNodeInfo?, out: JSONArray, depth: Int, compact: Boolean) {
+        if (node == null) return
+        try {
+            val text   = node.text?.toString().orEmpty()
+            val desc   = node.contentDescription?.toString().orEmpty()
+            val id     = node.viewIdResourceName.orEmpty()
+            val cls    = node.className?.toString().orEmpty()
+            val bounds = Rect().also { node.getBoundsInScreen(it) }
+
+            val hasContent = text.isNotEmpty() || desc.isNotEmpty()
+                || node.isClickable || node.isEditable
+                || node.isScrollable || node.isCheckable
+
+            if (!compact || hasContent) {
+                val obj = JSONObject()
+                if (text.isNotEmpty()) obj.put("text", text)
+                if (desc.isNotEmpty()) obj.put("desc", desc)
+                if (id.isNotEmpty())   obj.put("id",   id)
+                if (!compact)          obj.put("cls",  cls)
+                obj.put("bounds", "${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}")
+                if (node.isClickable)  obj.put("click",     true)
+                if (node.isEditable)   obj.put("edit",      true)
+                if (node.isScrollable) obj.put("scroll",    true)
+                if (node.isCheckable)  obj.put("checkable", true)
+                if (node.isChecked)    obj.put("checked",   true)
+                if (node.isFocused)    obj.put("focused",   true)
+                if (node.isSelected)   obj.put("selected",  true)
+                if (!compact)          obj.put("depth",     depth)
+                out.put(obj)
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                traverseNode(child, out, depth + 1, compact)
+                try { child.recycle() } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
+    // ── click / tap ─────────────────────────────────────────────
+    private fun doClick(text: String, id: String, desc: String): JSONObject {
+        if (text.isEmpty() && id.isEmpty() && desc.isEmpty()) {
+            throw IllegalArgumentException("provide 'text', 'id', or 'desc'")
+        }
+        val root = service.rootInActiveWindow ?: throw IllegalStateException("no active window")
+        try {
+            val target = findNode(root, text, id, desc)
+                ?: throw IllegalStateException("element not found: text=$text id=$id desc=$desc")
+            val bounds = Rect().also { target.getBoundsInScreen(it) }
+            val cx = bounds.centerX(); val cy = bounds.centerY()
+
+            var clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (!clicked) clicked = performTapGesture(cx, cy)
+            try { target.recycle() } catch (_: Exception) {}
+
+            return JSONObject().apply {
+                put("clicked", clicked); put("x", cx); put("y", cy)
+            }
+        } finally {
+            try { root.recycle() } catch (_: Exception) {}
+        }
+    }
+
+    private fun doTap(x: Int, y: Int): JSONObject {
+        val ok = performTapGesture(x, y)
+        return JSONObject().apply { put("tapped", ok); put("x", x); put("y", y) }
+    }
+
+    // ── input_text ──────────────────────────────────────────────
+    private fun doInputText(text: String, id: String, desc: String): JSONObject {
+        val root = service.rootInActiveWindow ?: throw IllegalStateException("no active window")
+        try {
+            var target = if (id.isNotEmpty() || desc.isNotEmpty()) findNode(root, "", id, desc) else null
+            if (target == null) target = findFocusedEditable(root)
+            if (target == null) {
+                target = findEditable(root)
+                target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+            target ?: throw IllegalStateException("no editable field found")
+
+            val args = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            try { target.recycle() } catch (_: Exception) {}
+
+            return JSONObject().apply { put("ok", ok); put("text", text) }
+        } finally {
+            try { root.recycle() } catch (_: Exception) {}
+        }
+    }
+
+    // ── scroll ──────────────────────────────────────────────────
+    private fun doScroll(direction: String, duration: Int): JSONObject {
+        val root = service.rootInActiveWindow ?: throw IllegalStateException("no active window")
+        val bounds = Rect().also { root.getBoundsInScreen(it) }
+        try { root.recycle() } catch (_: Exception) {}
+
+        val cx = bounds.centerX()
+        val h  = bounds.height()
+        val startY = if (direction == "down") bounds.top + h * 3 / 4 else bounds.top + h / 4
+        val endY   = if (direction == "down") bounds.top + h / 4     else bounds.top + h * 3 / 4
+
+        val path = Path().apply { moveTo(cx.toFloat(), startY.toFloat()); lineTo(cx.toFloat(), endY.toFloat()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, duration.toLong()))
+            .build()
+        val ok = service.dispatchGesture(gesture, null, null)
+        return JSONObject().apply { put("scrolled", ok); put("direction", direction) }
+    }
+
+    // ── open_url ────────────────────────────────────────────────
+    private fun doOpenUrl(url: String, newTab: Boolean): JSONObject {
+        if (newTab) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            service.applicationContext.startActivity(intent)
+            try { Thread.sleep(3000) } catch (_: InterruptedException) {}
+            return JSONObject().apply {
+                put("opened", true); put("navigated_in_place", false)
+                put("new_tab", true); put("url", url)
+            }
+        }
+
+        var navigated = false
+        val root = service.rootInActiveWindow
+        if (root != null) {
+            try {
+                val urlBar = findNode(root, "", "com.android.chrome:id/url_bar", "")
+                    ?: findNode(root, "", "com.android.chrome:id/search_box_text", "")
+                if (urlBar != null) {
+                    urlBar.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Thread.sleep(400)
+                    val args = Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, url)
+                    }
+                    urlBar.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    try { urlBar.recycle() } catch (_: Exception) {}
+                    Thread.sleep(500)
+
+                    val root2 = service.rootInActiveWindow
+                    if (root2 != null) {
+                        try {
+                            val dropdown = findNode(root2, "", "com.android.chrome:id/omnibox_suggestions_dropdown", "")
+                            if (dropdown != null) {
+                                for (i in 0 until dropdown.childCount) {
+                                    val child = dropdown.getChild(i) ?: continue
+                                    if (child.isClickable) {
+                                        val b = Rect().also { child.getBoundsInScreen(it) }
+                                        performTapGesture(b.centerX(), b.centerY())
+                                        try { child.recycle() } catch (_: Exception) {}
+                                        navigated = true
+                                        break
+                                    }
+                                    try { child.recycle() } catch (_: Exception) {}
+                                }
+                                try { dropdown.recycle() } catch (_: Exception) {}
+                            }
+                        } finally {
+                            try { root2.recycle() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { root.recycle() } catch (_: Exception) {}
+            }
+        }
+
+        if (!navigated) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            service.applicationContext.startActivity(intent)
+            navigated = true
+        }
+
+        try { Thread.sleep(2500) } catch (_: InterruptedException) {}
+        val root3 = service.rootInActiveWindow
+        if (root3 != null) {
+            try {
+                val urlBar = findNode(root3, "", "com.android.chrome:id/url_bar", "")
+                if (urlBar != null) {
+                    if (urlBar.isFocused) urlBar.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS)
+                    try { urlBar.recycle() } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { root3.recycle() } catch (_: Exception) {}
+            }
+        }
+
+        return JSONObject().apply {
+            put("opened", true); put("navigated_in_place", navigated); put("url", url)
+        }
+    }
+
+    // ── enter (best-effort form submit) ─────────────────────────
+    private fun doEnter(): JSONObject {
+        var ok = false
+        val root = service.rootInActiveWindow
+        if (root != null) {
+            try {
+                val submitIds   = arrayOf("nav-search-submit-button", "search-btn", "search_button",
+                    "search-submit-btn", "searchSubmit")
+                val submitTexts = arrayOf("Search", "Go", "Submit", "Find", "→", ">")
+
+                for (id in submitIds) {
+                    val btn = findNode(root, "", id, "")
+                    if (btn != null && btn.isClickable) {
+                        ok = btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        try { btn.recycle() } catch (_: Exception) {}
+                        if (ok) break
+                    }
+                }
+                if (!ok) {
+                    for (text in submitTexts) {
+                        val btn = findNode(root, text, "", "")
+                        if (btn != null && btn.isClickable) {
+                            ok = btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            try { btn.recycle() } catch (_: Exception) {}
+                            if (ok) break
+                        }
+                    }
+                }
+                if (!ok) {
+                    val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    if (focused != null) {
+                        ok = focused.performAction(AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT)
+                        try { focused.recycle() } catch (_: Exception) {}
+                    }
+                }
+            } finally {
+                try { root.recycle() } catch (_: Exception) {}
+            }
+        }
+
+        if (!ok) {
+            try {
+                val wm   = service.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+                val size = android.graphics.Point().also { wm.defaultDisplay.getSize(it) }
+                ok = performTapGesture(size.x - 60, size.y - 120)
+            } catch (e: Exception) {
+                Log.w(TAG, "enter fallback tap failed: ${e.message}")
+            }
+        }
+
+        return JSONObject().apply { put("ok", ok) }
+    }
+
+    private fun doGlobal(action: Int, name: String): JSONObject {
+        val ok = service.performGlobalAction(action)
+        return JSONObject().apply { put("ok", ok); put("action", name) }
+    }
+
+    // ── helpers ────────────────────────────────────────────────
+    private fun performTapGesture(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+            .build()
+        return service.dispatchGesture(gesture, null, null)
+    }
+
+    private fun findNode(root: AccessibilityNodeInfo?, text: String, id: String, desc: String): AccessibilityNodeInfo? {
+        if (root == null) return null
+        if (matches(root, text, id, desc)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = findNode(child, text, id, desc)
+            if (found != null) {
+                if (found != child) try { child.recycle() } catch (_: Exception) {}
+                return found
+            }
+            try { child.recycle() } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun findFocusedEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable && node.isFocused) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFocusedEditable(child)
+            if (found != null) {
+                if (found != child) try { child.recycle() } catch (_: Exception) {}
+                return found
+            }
+            try { child.recycle() } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun findEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findEditable(child)
+            if (found != null) {
+                if (found != child) try { child.recycle() } catch (_: Exception) {}
+                return found
+            }
+            try { child.recycle() } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun matches(node: AccessibilityNodeInfo, text: String, id: String, desc: String): Boolean {
+        if (text.isNotEmpty()) {
+            val t = node.text?.toString().orEmpty()
+            if (t.contains(text, ignoreCase = true)) return true
+        }
+        if (id.isNotEmpty()) {
+            val n = node.viewIdResourceName.orEmpty()
+            if (n.contains(id)) return true
+        }
+        if (desc.isNotEmpty()) {
+            val d = node.contentDescription?.toString().orEmpty()
+            if (d.contains(desc, ignoreCase = true)) return true
+        }
+        return false
+    }
+
+    companion object {
+        private const val TAG = "WarmerExec"
+    }
+}

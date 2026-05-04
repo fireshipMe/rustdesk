@@ -36,7 +36,11 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         "tap"           -> doTap(cmd.getInt("x"), cmd.getInt("y"))
         "input_text"    -> doInputText(cmd.getString("text"), cmd.optString("id"), cmd.optString("desc"))
         "scroll"        -> doScroll(cmd.optString("direction", "down"), cmd.optInt("duration", 300))
-        "open_url"      -> doOpenUrl(cmd.getString("url"), cmd.optBoolean("new_tab", false))
+        "open_url"      -> doOpenUrl(
+                              cmd.getString("url"),
+                              cmd.optBoolean("new_tab", false),
+                              cmd.optString("package", "com.android.chrome"))
+        "launch_app"    -> doLaunchApp(cmd.getString("package"))
         "back"          -> doGlobal(AccessibilityService.GLOBAL_ACTION_BACK, "back")
         "home"          -> doGlobal(AccessibilityService.GLOBAL_ACTION_HOME, "home")
         "notifications" -> doGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS, "notifications")
@@ -178,17 +182,20 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
     }
 
     // ── open_url ────────────────────────────────────────────────
-    private fun doOpenUrl(url: String, newTab: Boolean): JSONObject {
-        if (newTab) {
+    private fun doOpenUrl(url: String, newTab: Boolean, pkg: String): JSONObject {
+        val targetPkg = if (pkg.isEmpty()) "com.android.chrome" else pkg
+
+        // New tab OR non-Chrome browser → use Intent directly (no url_bar manipulation)
+        if (newTab || targetPkg != "com.android.chrome") {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                setPackage("com.android.chrome")
+                setPackage(targetPkg)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             service.applicationContext.startActivity(intent)
             try { Thread.sleep(3000) } catch (_: InterruptedException) {}
             return JSONObject().apply {
                 put("opened", true); put("navigated_in_place", false)
-                put("new_tab", true); put("url", url)
+                put("new_tab", newTab); put("package", targetPkg); put("url", url)
             }
         }
 
@@ -239,7 +246,7 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
 
         if (!navigated) {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                setPackage("com.android.chrome")
+                setPackage(targetPkg)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
             service.applicationContext.startActivity(intent)
@@ -262,8 +269,21 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         }
 
         return JSONObject().apply {
-            put("opened", true); put("navigated_in_place", navigated); put("url", url)
+            put("opened", true); put("navigated_in_place", navigated)
+            put("package", targetPkg); put("url", url)
         }
+    }
+
+    private fun doLaunchApp(pkg: String): JSONObject {
+        if (pkg.isEmpty()) throw IllegalArgumentException("package required")
+        val intent = service.applicationContext.packageManager.getLaunchIntentForPackage(pkg)
+            ?: return JSONObject().apply {
+                put("launched", false); put("error", "package not installed: $pkg")
+            }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        service.applicationContext.startActivity(intent)
+        try { Thread.sleep(2500) } catch (_: InterruptedException) {}
+        return JSONObject().apply { put("launched", true); put("package", pkg) }
     }
 
     // ── enter (best-effort form submit) ─────────────────────────

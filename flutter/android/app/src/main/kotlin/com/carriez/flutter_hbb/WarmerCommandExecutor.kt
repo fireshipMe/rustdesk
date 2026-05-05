@@ -31,11 +31,17 @@ import org.json.JSONObject
 
 class WarmerCommandExecutor(private val service: AccessibilityService) {
 
+    // Prefer `view_id` over `id` because the bridge overwrites the top-level `id`
+    // field with its own command-tracking hex. The agent's original click target id
+    // is forwarded as `view_id` (see /root/bridge/server.js sendCommand).
+    private fun targetId(cmd: JSONObject): String =
+        cmd.optString("view_id").ifEmpty { cmd.optString("id") }
+
     fun execute(cmd: JSONObject): JSONObject = when (val type = cmd.getString("type")) {
         "get_screen"    -> parseScreenJson(cmd.optBoolean("compact", false))
-        "click"         -> doClick(cmd.optString("text"), cmd.optString("id"), cmd.optString("desc"))
+        "click"         -> doClick(cmd.optString("text"), targetId(cmd), cmd.optString("desc"))
         "tap"           -> doTap(cmd.getInt("x"), cmd.getInt("y"))
-        "input_text"    -> doInputText(cmd.getString("text"), cmd.optString("id"), cmd.optString("desc"))
+        "input_text"    -> doInputText(cmd.getString("text"), targetId(cmd), cmd.optString("desc"))
         "scroll"        -> doScroll(cmd.optString("direction", "down"), cmd.optInt("duration", 300))
         "open_url"      -> doOpenUrl(
                               cmd.getString("url"),

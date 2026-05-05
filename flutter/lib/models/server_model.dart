@@ -608,6 +608,14 @@ class ServerModel with ChangeNotifier {
     if (id != _serverId.id) {
       _serverId.id = id;
       notifyListeners();
+      // Push the RustDesk peer ID to native Warmer service so it registers
+      // with the OpenClaw bridge under a stable identifier instead of legacy.
+      // Independent of DroidShare auth — fires as soon as the ID is known.
+      if (id.isNotEmpty) {
+        try {
+          await gFFI.invokeMethod("warmer_set_rustdesk_id", id);
+        } catch (_) {}
+      }
     }
   }
 

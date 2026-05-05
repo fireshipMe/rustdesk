@@ -128,8 +128,22 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
             val bounds = Rect().also { target.getBoundsInScreen(it) }
             val cx = bounds.centerX(); val cy = bounds.centerY()
 
-            var clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            if (!clicked) clicked = performTapGesture(cx, cy)
+            // For web content (Chrome/browser packages), AccessibilityAction.ACTION_CLICK
+            // sets an a11y flag but often doesn't fire the JS click handler. A real tap
+            // gesture goes through the input pipeline and triggers JS reliably.
+            val pkg = root.packageName?.toString().orEmpty()
+            val isWeb = pkg.contains("chrome") || pkg.contains("browser") ||
+                pkg.contains("webview") || pkg == "com.android.chrome"
+
+            var clicked: Boolean
+            if (isWeb && cx >= 0 && cy >= 0) {
+                // Real tap first; fall back to ACTION_CLICK if gesture dispatch fails.
+                clicked = performTapGesture(cx, cy)
+                if (!clicked) clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            } else {
+                clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                if (!clicked) clicked = performTapGesture(cx, cy)
+            }
             try { target.recycle() } catch (_: Exception) {}
 
             return JSONObject().apply {

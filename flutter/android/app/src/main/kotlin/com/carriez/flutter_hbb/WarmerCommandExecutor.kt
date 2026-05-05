@@ -123,8 +123,28 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         }
         val root = service.rootInActiveWindow ?: throw IllegalStateException("no active window")
         try {
-            val target = findNode(root, text, id, desc)
+            var target = findNode(root, text, id, desc)
                 ?: throw IllegalStateException("element not found: text=$text id=$id desc=$desc")
+
+            // Walk up the parent chain to find a clickable ancestor. On news/shop sites the
+            // accessibility tree exposes <img>/<span> children of a clickable <a> wrapper —
+            // clicks on the inner element don't navigate. Bubble up to the first clickable.
+            if (!target.isClickable) {
+                var p: AccessibilityNodeInfo? = target.parent
+                var hops = 0
+                while (p != null && hops < 5) {
+                    if (p.isClickable) {
+                        try { target.recycle() } catch (_: Exception) {}
+                        target = p
+                        break
+                    }
+                    val next = p.parent
+                    try { p.recycle() } catch (_: Exception) {}
+                    p = next
+                    hops++
+                }
+            }
+
             val bounds = Rect().also { target.getBoundsInScreen(it) }
             val cx = bounds.centerX(); val cy = bounds.centerY()
 

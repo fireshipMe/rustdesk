@@ -301,7 +301,9 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
                     val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                     if (focused != null && focused.isEditable) {
                         try {
-                            ok = focused.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+                            // ACTION_IME_ENTER is an AccessibilityAction object on API 30+;
+                            // performAction(int) needs the .id of the action.
+                            ok = focused.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
                         } catch (_: Exception) {}
                         try { focused.recycle() } catch (_: Exception) {}
                     }

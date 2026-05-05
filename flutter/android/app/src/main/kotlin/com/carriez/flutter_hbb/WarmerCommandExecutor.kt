@@ -22,6 +22,7 @@ import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
@@ -292,11 +293,25 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         val root = service.rootInActiveWindow
         if (root != null) {
             try {
+                // 1. Try IME_ENTER on the focused input (Android 30+) — fires the
+                //    keyboard's Search/Go/Done action key, which Amazon/Google/etc
+                //    treat as actual form submit (unlike ACTION_CLICK on a submit
+                //    button, which sometimes only opens autocomplete).
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    if (focused != null && focused.isEditable) {
+                        try {
+                            ok = focused.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+                        } catch (_: Exception) {}
+                        try { focused.recycle() } catch (_: Exception) {}
+                    }
+                }
+
                 val submitIds   = arrayOf("nav-search-submit-button", "search-btn", "search_button",
-                    "search-submit-btn", "searchSubmit")
+                    "search-submit-btn", "searchSubmit", "search-submit", "search-go")
                 val submitTexts = arrayOf("Search", "Go", "Submit", "Find", "→", ">")
 
-                for (id in submitIds) {
+                if (!ok) for (id in submitIds) {
                     val btn = findNode(root, "", id, "")
                     if (btn != null && btn.isClickable) {
                         ok = btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)

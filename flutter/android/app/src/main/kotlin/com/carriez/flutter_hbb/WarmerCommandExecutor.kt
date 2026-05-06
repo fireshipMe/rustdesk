@@ -19,13 +19,21 @@ package com.carriez.flutter_hbb
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
+import android.hardware.HardwareBuffer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -52,8 +60,76 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         "home"          -> doGlobal(AccessibilityService.GLOBAL_ACTION_HOME, "home")
         "notifications" -> doGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS, "notifications")
         "enter"         -> doEnter()
+        "screenshot"    -> doScreenshot(
+                              cmd.optInt("max_dim", 1080),
+                              cmd.optInt("quality", 70))
         "ping"          -> JSONObject().apply { put("status", "ok"); put("service", "rustdesk-warmer") }
         else            -> throw IllegalArgumentException("unknown command: $type")
+    }
+
+    // ── screenshot ──────────────────────────────────────────────
+    // Returns a JPEG-encoded screenshot as base64. Capped to max_dim on the
+    // long edge to keep payload small (vision LLMs see ~1000x800 just fine
+    // and Anthropic charges per pixel-tile).
+    private fun doScreenshot(maxDim: Int, quality: Int): JSONObject {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return JSONObject().apply { put("error", "screenshot requires Android 11+") }
+        }
+        val latch    = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        var bitmap: Bitmap? = null
+        var err: String? = null
+
+        service.takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            executor,
+            object : AccessibilityService.TakeScreenshotCallback {
+                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                    try {
+                        val hb = result.hardwareBuffer
+                        val cs = result.colorSpace
+                        bitmap = Bitmap.wrapHardwareBuffer(hb, cs)?.copy(Bitmap.Config.ARGB_8888, false)
+                        try { hb.close() } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        err = "wrap failed: ${e.message}"
+                    }
+                    latch.countDown()
+                }
+                override fun onFailure(errorCode: Int) {
+                    err = "screenshot failed: $errorCode"
+                    latch.countDown()
+                }
+            },
+        )
+        latch.await(8, TimeUnit.SECONDS)
+        executor.shutdown()
+
+        val src = bitmap ?: return JSONObject().apply { put("error", err ?: "no bitmap") }
+        try {
+            // Downscale long edge to maxDim
+            val w = src.width; val h = src.height
+            val scale = if (maxOf(w, h) > maxDim) maxDim.toFloat() / maxOf(w, h) else 1f
+            val tw = (w * scale).toInt().coerceAtLeast(1)
+            val th = (h * scale).toInt().coerceAtLeast(1)
+            val scaled = if (scale < 1f) Bitmap.createScaledBitmap(src, tw, th, true) else src
+
+            val baos = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 95), baos)
+            val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+
+            try { if (scaled !== src) scaled.recycle() } catch (_: Exception) {}
+            try { src.recycle() } catch (_: Exception) {}
+
+            return JSONObject().apply {
+                put("ok", true)
+                put("mime", "image/jpeg")
+                put("width", tw)
+                put("height", th)
+                put("base64", b64)
+            }
+        } catch (e: Exception) {
+            return JSONObject().apply { put("error", "encode failed: ${e.message}") }
+        }
     }
 
     // ── get_screen ──────────────────────────────────────────────

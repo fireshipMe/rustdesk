@@ -365,6 +365,10 @@ jobs:
         sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
 
         cd flutter
+        # Workaround for dart-lang/pub bug: "Null check operator used on a null
+        # value" inside HostedSource._getAdvisories.readAdvisoriesFromCache.
+        # Wipe the advisories cache so pub regenerates it cleanly on get.
+        rm -rf "$HOME/.pub-cache/_pub_cache/_advisories_" "$HOME/.pub-cache/advisories" || true
         flutter pub get
         flutter build apk --release --target-platform android-arm64,android-arm
 

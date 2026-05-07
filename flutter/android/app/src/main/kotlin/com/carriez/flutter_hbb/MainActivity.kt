@@ -510,7 +510,15 @@ class MainActivity : FlutterActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (FFI.getLocalOption("disable-floating-window") != "Y" && MainService.isReady) {
+        // Floating window intentionally disabled in this fork: it's a
+        // TYPE_APPLICATION_OVERLAY which makes Android block tap-input on
+        // sensitive permission dialogs (location, camera, mic, install) as a
+        // tapjacking countermeasure — that breaks our automation flows.
+        // MainService.wakeLock (SCREEN_BRIGHT_WAKE_LOCK) already keeps the
+        // screen on during a remote-control session, so no functionality lost.
+        // Users who want the indicator back can set local option
+        // "disable-floating-window" = "N" and rebuild.
+        if (FFI.getLocalOption("disable-floating-window") == "N" && MainService.isReady) {
             startService(Intent(this, FloatingWindowService::class.java))
         }
     }

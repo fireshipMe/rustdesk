@@ -66,6 +66,10 @@ jobs:
         cd $(dirname $(dirname $(which flutter)))
         [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff || true
 
+    - name: Wipe pub advisories cache (workaround dart-lang/pub null-check bug)
+      run: |
+        rm -rf "$HOME/.pub-cache/_pub_cache/_advisories_" "$HOME/.pub-cache/advisories" || true
+
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       id: setup-ndk

@@ -479,9 +479,14 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
 
     // ── helpers ────────────────────────────────────────────────
     private fun performTapGesture(x: Int, y: Int): Boolean {
+        // Tap duration: 50ms was too short for Chrome WebView JS click handlers
+        // (cookie banners, modals, onclick events) — they often ignore taps
+        // shorter than ~80ms as "not genuine". 100ms ± jitter is well within
+        // human-tap range and mirrors what ADB `input tap` generates by default.
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val durationMs = 90L + (Math.random() * 40).toLong()  // 90-130ms
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
         return service.dispatchGesture(gesture, null, null)
     }

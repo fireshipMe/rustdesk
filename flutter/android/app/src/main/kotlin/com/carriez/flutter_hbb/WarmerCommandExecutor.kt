@@ -64,6 +64,7 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
                               cmd.optInt("max_dim", 1080),
                               cmd.optInt("quality", 70))
         "ping"          -> JSONObject().apply { put("status", "ok"); put("service", "rustdesk-warmer") }
+        "network_speed" -> SpeedTestExecutor.measure()
         else            -> throw IllegalArgumentException("unknown command: $type")
     }
 

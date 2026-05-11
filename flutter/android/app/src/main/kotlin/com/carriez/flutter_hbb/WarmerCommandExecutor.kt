@@ -287,8 +287,17 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
 
         val cx = bounds.centerX()
         val h  = bounds.height()
-        val startY = if (direction == "down") bounds.top + h * 3 / 4 else bounds.top + h / 4
-        val endY   = if (direction == "down") bounds.top + h / 4     else bounds.top + h * 3 / 4
+        // CRITICAL: keep swipe inside the upper half of the visible area so the
+        // gesture NEVER starts/ends inside the soft-keyboard region. On 2400px
+        // screens the keyboard occupies roughly y=1100..2400 — a swipe that
+        // begins at y=1800 (the old 75% startY) lands on the keyboard's
+        // suggestion strip; the system interprets it as a tap on the
+        // highlighted suggestion ("TY", "ft", etc.) and inserts that text into
+        // the focused field. Result: typing "John" + scroll → field becomes
+        // "JohnTY". Confined to 0.25..0.55 of height, the swipe stays in
+        // content area regardless of keyboard visibility.
+        val startY = if (direction == "down") bounds.top + (h * 0.55).toInt() else bounds.top + (h * 0.25).toInt()
+        val endY   = if (direction == "down") bounds.top + (h * 0.25).toInt() else bounds.top + (h * 0.55).toInt()
 
         val path = Path().apply { moveTo(cx.toFloat(), startY.toFloat()); lineTo(cx.toFloat(), endY.toFloat()) }
         val gesture = GestureDescription.Builder()

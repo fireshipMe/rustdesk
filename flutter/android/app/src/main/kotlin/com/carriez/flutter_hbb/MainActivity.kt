@@ -409,15 +409,15 @@ class MainActivity : FlutterActivity() {
                     result.success("")
                 }
                 "show_privacy_screen" -> {
-                    PrivacyScreenService.show(this)
+                    RentalBannerService.show(this)
                     result.success(null)
                 }
                 "hide_privacy_screen" -> {
-                    PrivacyScreenService.hide(this)
+                    RentalBannerService.hide(this)
                     result.success(null)
                 }
                 "privacy_screen_status" -> {
-                    result.success(PrivacyScreenService.isShowing)
+                    result.success(RentalBannerService.isShowing)
                 }
                 else -> result.error("-1", "No such method", null)
             }

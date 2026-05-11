@@ -109,9 +109,9 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
-        <!-- PrivacyScreenService: занавеска экрана во время удалённого сеанса -->
+        <!-- RentalBannerService: баннер «ИДЁТ АРЕНДА» сверху экрана во время сеанса -->
         <service
-            android:name=".PrivacyScreenService"
+            android:name=".RentalBannerService"
             android:foregroundServiceType="specialUse"
             android:enabled="true"
             android:exported="false" />

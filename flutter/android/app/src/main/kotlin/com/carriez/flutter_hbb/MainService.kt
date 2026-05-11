@@ -31,7 +31,6 @@ import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 import android.hardware.display.VirtualDisplay
 import android.media.*
 import android.media.projection.MediaProjection
@@ -214,7 +213,6 @@ class MainService : Service() {
             get() = _isStart
         val isAudioStart: Boolean
             get() = _isAudioStart
-        // Ссылка для управления из PrivacyScreenService
         @Volatile var instance: MainService? = null
         // Track whether a remote session is currently active
         var isSessionActive: Boolean = false
@@ -532,24 +530,6 @@ class MainService : Service() {
         stopSelf()
     }
 
-    /**
-     * Пересоздаёт VirtualDisplay с правильными флагами.
-     * С занавеской: AUTO_MIRROR | OWN_CONTENT_ONLY (overlay не попадает в захват)
-     * Без занавески: AUTO_MIRROR (стандартный режим)
-     */
-    fun recreateVirtualDisplay() {
-        val mp = mediaProjection ?: return
-        val s = surface ?: return
-        try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            createOrSetVirtualDisplay(mp, s)
-            Log.d(logTag, "VirtualDisplay recreated, privacyScreen=${PrivacyScreenService.isShowing}")
-        } catch (e: Exception) {
-            Log.e(logTag, "recreateVirtualDisplay failed: ${e.message}")
-        }
-    }
-
     fun checkMediaPermission(): Boolean {
         Handler(Looper.getMainLooper()).post {
             MainActivity.flutterMethodChannel?.invokeMethod(
@@ -596,21 +576,12 @@ class MainService : Service() {
                 it.resize(SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi)
                 it.setSurface(s)
             } ?: let {
-                // VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR — зеркалирует физический экран
-                // включая overlay/занавеску (оба видят одно и то же).
-                //
-                // Для privacy screen используем AUTO_MIRROR | OWN_CONTENT_ONLY:
-                // AUTO_MIRROR      — контент физического экрана попадает в VD
-                // OWN_CONTENT_ONLY — overlay (TYPE_APPLICATION_OVERLAY) НЕ попадает в VD
-                // Результат: админ видит чистый экран, пользователь видит занавеску
-                val vdFlags = if (PrivacyScreenService.isShowing) {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                } else {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-                }
+                // AUTO_MIRROR — зеркалирует физический экран включая overlay-баннер
+                // «ИДЁТ АРЕНДА», чтобы арендатор тоже его видел.
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
-                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, vdFlags,
+                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi,
+                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
             }

@@ -577,9 +577,9 @@ class ServerModel with ChangeNotifier {
     _isStart = false;
     _userStoppedService = true;
     closeAll();
-    // Убираем занавеску при остановке сервиса
+    // Убираем баннер при остановке сервиса
     if (isAndroid) {
-      // parent.target?.invokeMethod("hide_privacy_screen"); // DISABLED FOR TESTING
+      parent.target?.invokeMethod("hide_privacy_screen");
     }
     // Send status update before disconnecting
     sendStatusUpdate("offline");
@@ -833,11 +833,10 @@ class ServerModel with ChangeNotifier {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
         parent.target?.invokeMethod("start_capture");
-        // Занавеска в обоих режимах:
-        // XML: overlay не в accessibility дереве
-        // MP: setSkipScreenshot скрывает от захвата (Android 10+)
+        // Показываем баннер «ИДЁТ АРЕНДА» при авторизации клиента.
+        // Виден и хосту физически, и в стриме у арендатора.
         if (isAndroid) {
-          // parent.target?.invokeMethod("show_privacy_screen"); // DISABLED FOR TESTING
+          parent.target?.invokeMethod("show_privacy_screen");
         }
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
@@ -873,11 +872,11 @@ class ServerModel with ChangeNotifier {
       if (desktopType == DesktopType.cm && _clients.isEmpty) {
         hideCmWindow();
       }
-      // Скрываем занавеску если больше нет активных клиентов
+      // Убираем баннер если больше нет активных клиентов
       if (isAndroid) {
         final hasActiveClients = _clients.any((c) => c.authorized && !c.disconnected);
         if (!hasActiveClients) {
-          // parent.target?.invokeMethod("hide_privacy_screen"); // DISABLED FOR TESTING
+          parent.target?.invokeMethod("hide_privacy_screen");
         }
       }
       if (isAndroid) androidUpdatekeepScreenOn();

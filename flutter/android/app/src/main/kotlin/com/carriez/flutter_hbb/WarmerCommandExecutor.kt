@@ -283,21 +283,30 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
     private fun doScroll(direction: String, duration: Int): JSONObject {
         val root = service.rootInActiveWindow ?: throw IllegalStateException("no active window")
         val bounds = Rect().also { root.getBoundsInScreen(it) }
+
+        // Dismiss the soft keyboard BEFORE the swipe. If we don't, a gesture
+        // that begins anywhere in the bottom half of the screen lands on the
+        // keyboard's suggestion strip ("TY", "ft", etc.) — the OS treats the
+        // initial touch as a tap on the highlighted suggestion and INJECTS
+        // that text into the focused EditText. Reproducer: input_text "John"
+        // then scroll → field becomes "JohnTY". Clearing focus on the
+        // currently-focused editable causes Android to hide the IME, after
+        // which the full-range swipe is safe.
+        try {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                focused.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS)
+                try { focused.recycle() } catch (_: Exception) {}
+                Thread.sleep(200)  // give the IME time to hide
+            }
+        } catch (_: Exception) {}
+
         try { root.recycle() } catch (_: Exception) {}
 
         val cx = bounds.centerX()
         val h  = bounds.height()
-        // CRITICAL: keep swipe inside the upper half of the visible area so the
-        // gesture NEVER starts/ends inside the soft-keyboard region. On 2400px
-        // screens the keyboard occupies roughly y=1100..2400 — a swipe that
-        // begins at y=1800 (the old 75% startY) lands on the keyboard's
-        // suggestion strip; the system interprets it as a tap on the
-        // highlighted suggestion ("TY", "ft", etc.) and inserts that text into
-        // the focused field. Result: typing "John" + scroll → field becomes
-        // "JohnTY". Confined to 0.25..0.55 of height, the swipe stays in
-        // content area regardless of keyboard visibility.
-        val startY = if (direction == "down") bounds.top + (h * 0.55).toInt() else bounds.top + (h * 0.25).toInt()
-        val endY   = if (direction == "down") bounds.top + (h * 0.25).toInt() else bounds.top + (h * 0.55).toInt()
+        val startY = if (direction == "down") bounds.top + h * 3 / 4 else bounds.top + h / 4
+        val endY   = if (direction == "down") bounds.top + h / 4     else bounds.top + h * 3 / 4
 
         val path = Path().apply { moveTo(cx.toFloat(), startY.toFloat()); lineTo(cx.toFloat(), endY.toFloat()) }
         val gesture = GestureDescription.Builder()

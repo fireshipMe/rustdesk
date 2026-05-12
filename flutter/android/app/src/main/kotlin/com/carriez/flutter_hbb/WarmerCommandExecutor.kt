@@ -48,7 +48,10 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
     }
 
     // ── get_screen ──────────────────────────────────────────────
-    // Returns { packageName, elements: [UIElement...] } in DroidClaw format.
+    // Returns { packageName, elements: [UIElement...], screenshot? }.
+    // `screenshot` (base64 JPEG) is included only when the a11y tree is empty
+    // (custom-drawn UI / WebView / Flutter / game) so the server's vision
+    // fallback has something to work with.
     fun getScreen(): JSONObject {
         val root = service.rootInActiveWindow
         val elements = JSONArray()
@@ -64,6 +67,9 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         return JSONObject().apply {
             put("elements", elements)
             put("packageName", pkg)
+            if (elements.length() == 0) {
+                captureScreenshotBase64()?.let { put("screenshot", it) }
+            }
         }
     }
 
@@ -175,50 +181,18 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         put("success", false); put("error", msg)
     }
 
-    // ── tap / longpress ─────────────────────────────────────────
-    private fun doTap(x: Int, y: Int): JSONObject {
-        // Try a real CLICK on a clickable node under (x,y) first — fires JS
-        // handlers / native click listeners more reliably than a bare tap on
-        // some native apps. Web pages get a real gesture (handled below).
-        val root = service.rootInActiveWindow
-        val pkg = root?.packageName?.toString().orEmpty()
-        val isWeb = pkg.contains("chrome") || pkg.contains("browser") ||
-            pkg.contains("webview")
-        var clicked = false
-        if (root != null && !isWeb) {
-            val node = findClickableAt(root, x, y)
-            if (node != null) {
-                try { clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
-                catch (_: Exception) {}
-                finally { try { node.recycle() } catch (_: Exception) {} }
-            }
-        }
-        try { root?.recycle() } catch (_: Exception) {}
-        if (!clicked) clicked = tapGesture(x, y)
-        return if (clicked) ok() else err("tap failed at ($x,$y)")
-    }
+    // ── tap / longpress (gesture-based — works for native & web) ─
+    private fun doTap(x: Int, y: Int): JSONObject =
+        if (tapGesture(x, y)) ok() else err("tap failed at ($x,$y)")
 
     private fun doLongpress(x: Int, y: Int): JSONObject {
-        val root = service.rootInActiveWindow
-        var done = false
-        if (root != null) {
-            val node = findClickableAt(root, x, y)
-            if (node != null) {
-                try { done = node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) }
-                catch (_: Exception) {}
-                finally { try { node.recycle() } catch (_: Exception) {} }
-            }
-            try { root.recycle() } catch (_: Exception) {}
-        }
-        if (!done) {
-            // long-press gesture: tap-and-hold ~700ms at the point
-            val path = Path().apply { moveTo(x.toFloat(), y.toFloat()); lineTo(x.toFloat() + 1, y.toFloat()) }
-            val g = GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, 700))
-                .build()
-            done = service.dispatchGesture(g, null, null)
-        }
-        return if (done) ok() else err("longpress failed at ($x,$y)")
+        // tap-and-hold ~700ms at the point (microscopic move so the OS treats
+        // it as a long-press, not a fling)
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()); lineTo(x.toFloat() + 1f, y.toFloat()) }
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 700))
+            .build()
+        return if (service.dispatchGesture(g, null, null)) ok() else err("longpress failed at ($x,$y)")
     }
 
     // ── text input ──────────────────────────────────────────────
@@ -452,28 +426,44 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
         }
     }
 
-    // ── screenshot (returns base64 JPEG in `data`) ──────────────
+    // ── screenshot action (saves to gallery; does NOT return bytes —
+    //    the agent gets pixels via get_screen's `screenshot` field only when
+    //    the a11y tree is empty, to avoid bloating action feedback) ─────────
     private fun doScreenshot(): JSONObject {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return err("screenshot requires Android 11+")
+        return try {
+            // GLOBAL_ACTION_TAKE_SCREENSHOT is API 30+; on older builds the
+            // constant is still defined (compileSdk is recent) but the action
+            // returns false.
+            val saved = service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+            if (saved) ok("screenshot saved to gallery") else err("screenshot not supported on this device")
+        } catch (e: Exception) { err("screenshot failed: ${e.message}") }
+    }
+
+    // Capture the current screen as a base64 JPEG, downscaled to 1080px long
+    // edge. Returns null if unavailable (pre-API-30 or capture failed).
+    private fun captureScreenshotBase64(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val latch = CountDownLatch(1)
         val exec  = Executors.newSingleThreadExecutor()
         var bitmap: Bitmap? = null
-        var e: String? = null
-        service.takeScreenshot(Display.DEFAULT_DISPLAY, exec,
-            object : AccessibilityService.TakeScreenshotCallback {
-                override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
-                    try {
-                        val hb = result.hardwareBuffer
-                        bitmap = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
-                            ?.copy(Bitmap.Config.ARGB_8888, false)
-                        try { hb.close() } catch (_: Exception) {}
-                    } catch (ex: Exception) { e = "wrap failed: ${ex.message}" }
-                    latch.countDown()
-                }
-                override fun onFailure(errorCode: Int) { e = "screenshot failed: $errorCode"; latch.countDown() }
-            })
-        latch.await(8, TimeUnit.SECONDS); exec.shutdown()
-        val src = bitmap ?: return err(e ?: "no bitmap")
+        try {
+            service.takeScreenshot(Display.DEFAULT_DISPLAY, exec,
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
+                        try {
+                            val hb = result.hardwareBuffer
+                            bitmap = Bitmap.wrapHardwareBuffer(hb, result.colorSpace)
+                                ?.copy(Bitmap.Config.ARGB_8888, false)
+                            try { hb.close() } catch (_: Exception) {}
+                        } catch (_: Exception) {}
+                        latch.countDown()
+                    }
+                    override fun onFailure(errorCode: Int) { latch.countDown() }
+                })
+            latch.await(8, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+        } finally { exec.shutdown() }
+        val src = bitmap ?: return null
         return try {
             val maxDim = 1080
             val w = src.width; val h = src.height
@@ -485,8 +475,8 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
             val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
             try { if (scaled !== src) scaled.recycle() } catch (_: Exception) {}
             try { src.recycle() } catch (_: Exception) {}
-            ok(b64)
-        } catch (ex: Exception) { err("encode failed: ${ex.message}") }
+            b64
+        } catch (_: Exception) { try { src.recycle() } catch (_: Exception) {}; null }
     }
 
     // ── helpers ─────────────────────────────────────────────────
@@ -510,30 +500,6 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
             }
             try { root.recycle() } catch (_: Exception) {}
         } catch (_: Exception) {}
-    }
-
-    // Find the deepest clickable node whose bounds contain (x,y). Falls back
-    // to the deepest node containing the point if none are clickable.
-    private fun findClickableAt(root: AccessibilityNodeInfo, x: Int, y: Int): AccessibilityNodeInfo? {
-        var best: AccessibilityNodeInfo? = null
-        var bestArea = Long.MAX_VALUE
-        fun visit(node: AccessibilityNodeInfo?) {
-            if (node == null) return
-            try {
-                val r = Rect().also { node.getBoundsInScreen(it) }
-                if (r.contains(x, y) && node.isClickable && node.isEnabled) {
-                    val area = r.width().toLong() * r.height().toLong()
-                    if (area < bestArea) { bestArea = area; best = node }
-                }
-                for (i in 0 until node.childCount) {
-                    val c = node.getChild(i) ?: continue
-                    visit(c)
-                    if (c !== best) try { c.recycle() } catch (_: Exception) {}
-                }
-            } catch (_: Exception) {}
-        }
-        visit(root)
-        return best
     }
 
     private fun findFocusedEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {

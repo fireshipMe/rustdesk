@@ -143,6 +143,7 @@ object WarmerService {
                         val s = exec.getScreen()
                         put("elements", s.optJSONArray("elements") ?: JSONArray())
                         put("packageName", s.optString("packageName"))
+                        if (s.has("screenshot")) put("screenshot", s.optString("screenshot"))
                     } else {
                         put("elements", JSONArray())
                     }
@@ -210,6 +211,7 @@ object WarmerService {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun screenSize(): Pair<Int, Int> {
         return try {
             val svc = service ?: return 1080 to 2400
@@ -219,7 +221,7 @@ object WarmerService {
                 b.width() to b.height()
             } else {
                 val p = android.graphics.Point()
-                @Suppress("DEPRECATION") wm.defaultDisplay.getRealSize(p)
+                wm.defaultDisplay.getRealSize(p)
                 p.x to p.y
             }
         } catch (_: Exception) { 1080 to 2400 }
@@ -230,7 +232,7 @@ object WarmerService {
             val svc = service ?: return 0 to false
             val bm = svc.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
             val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            val charging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) bm.isCharging else false
+            val charging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) bm.isCharging else false
             level to charging
         } catch (_: Exception) { 0 to false }
     }

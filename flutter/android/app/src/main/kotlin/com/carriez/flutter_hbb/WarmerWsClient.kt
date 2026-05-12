@@ -95,14 +95,14 @@ class WarmerWsClient(
         val rawIn = s.getInputStream()
 
         val key = generateKey()
+        val hostHeader = if (port == 80 || port == 443) host else "$host:$port"
         val req = buildString {
             append("GET $path HTTP/1.1\r\n")
-            append("Host: $host:$port\r\n")
+            append("Host: $hostHeader\r\n")
             append("Upgrade: websocket\r\n")
             append("Connection: Upgrade\r\n")
             append("Sec-WebSocket-Key: $key\r\n")
             append("Sec-WebSocket-Version: 13\r\n")
-            append("X-Device-Token: $token\r\n")
             append("\r\n")
         }
         o.write(req.toByteArray(Charsets.UTF_8))

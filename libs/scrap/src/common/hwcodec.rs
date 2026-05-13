@@ -11,6 +11,8 @@ use hbb_common::{
     serde_derive::{Deserialize, Serialize},
     serde_json, ResultType,
 };
+#[cfg(target_os = "android")]
+use hbb_common::config;
 use hwcodec::{
     common::{
         DataFormat, HwcodecErrno,
@@ -30,6 +32,18 @@ pub const DEFAULT_FPS: i32 = 30;
 const DEFAULT_GOP: i32 = i32::MAX;
 const DEFAULT_HW_QUALITY: Quality = Quality_Default;
 pub const ERR_HEVC_POC: i32 = HwcodecErrno::HWCODEC_ERR_HEVC_COULD_NOT_FIND_POC as i32;
+
+/// Hard cap on the encoder bitrate (kbps) when the *host* is Android.
+/// Mobile uplinks (LTE/5G) typically deliver 2-10 Mbps with high jitter.
+/// Without a cap, ABR can push the MediaCodec encoder to 6-8+ Mbps on a
+/// "green" delay sample, the cellular tower's queue then buffers and the
+/// next delay sample spikes — even though the average path is fine.
+/// 3000 kbps is a conservative default for screen content (mostly UI,
+/// rarely full-screen video). Set the config option to 0 to disable the cap.
+#[cfg(target_os = "android")]
+const OPTION_ANDROID_HOST_MAX_BITRATE_KBPS: &str = "android-host-max-bitrate-kbps";
+#[cfg(target_os = "android")]
+const ANDROID_HOST_MAX_BITRATE_KBPS_DEFAULT: u32 = 3000;
 
 crate::generate_call_macro!(call_yuv, false);
 
@@ -241,10 +255,11 @@ impl HwRamEncoder {
     }
 
     fn rate_control(_config: &HwRamEncoderConfig) -> RateControl {
-        #[cfg(target_os = "android")]
-        if _config.name.contains("mediacodec") {
-            return RC_VBR;
-        }
+        // CBR everywhere by default. On a mobile uplink VBR lets the encoder
+        // burst above the negotiated target on busy frames; that burst sits
+        // in the cellular tower's queue and shows up as a 200-500ms latency
+        // spike on the next frame. CBR keeps the rate flat and predictable —
+        // ABR is the right place to react to network changes, not the encoder.
         RC_CBR
     }
 
@@ -280,6 +295,25 @@ impl HwRamEncoder {
     }
 
     pub fn check_bitrate_range(_config: &HwRamEncoderConfig, bitrate: u32) -> u32 {
+        #[cfg(target_os = "android")]
+        let bitrate = {
+            let mut bitrate = bitrate;
+            if _config.name.contains("mediacodec") {
+                // Mobile-uplink cap (see ANDROID_HOST_MAX_BITRATE_KBPS_DEFAULT
+                // and OPTION_ANDROID_HOST_MAX_BITRATE_KBPS at the top of this
+                // file). Applied BEFORE the codec's own min/max so the cap is
+                // always respected.
+                let cap_kbps = config::Config::get_option(OPTION_ANDROID_HOST_MAX_BITRATE_KBPS)
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .unwrap_or(ANDROID_HOST_MAX_BITRATE_KBPS_DEFAULT);
+                if bitrate > cap_kbps {
+                    bitrate = cap_kbps;
+                }
+            }
+            bitrate
+        };
         #[cfg(target_os = "android")]
         if _config.name.contains("mediacodec") {
             let info = crate::android::ffi::get_codec_info();

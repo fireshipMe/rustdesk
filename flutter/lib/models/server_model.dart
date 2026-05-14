@@ -577,8 +577,9 @@ class ServerModel with ChangeNotifier {
     _isStart = false;
     _userStoppedService = true;
     closeAll();
-    // Убираем баннер при остановке сервиса
+    // Убираем штору при остановке сервиса
     if (isAndroid) {
+      debugPrint("[RentalBanner] stopService -> hide_privacy_screen");
       parent.target?.invokeMethod("hide_privacy_screen");
     }
     // Send status update before disconnecting
@@ -833,10 +834,24 @@ class ServerModel with ChangeNotifier {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
         parent.target?.invokeMethod("start_capture");
-        // Показываем баннер «ИДЁТ АРЕНДА» при авторизации клиента.
-        // Виден и хосту физически, и в стриме у арендатора.
+        // Показываем штору «ИДЁТ АРЕНДА» при авторизации клиента —
+        // сотрудник на физическом экране видит занавеску, админ через
+        // MediaProjection видит настоящий экран.
         if (isAndroid) {
-          parent.target?.invokeMethod("show_privacy_screen");
+          debugPrint("[RentalBanner] sendLoginResponse: clientId=${client.id} "
+              "isFT=${client.isFileTransfer} isTerm=${client.isTerminal} "
+              "parent.target=${parent.target != null}");
+          try {
+            final ok = await parent.target?.invokeMethod("show_privacy_screen");
+            debugPrint("[RentalBanner] show_privacy_screen invokeMethod result=$ok");
+            if (ok == false) {
+              debugPrint("[RentalBanner] WARNING: native returned false — "
+                  "SYSTEM_ALERT_WINDOW likely not granted, or "
+                  "startForegroundService failed. See logcat tag 'RentalBanner'.");
+            }
+          } catch (e, st) {
+            debugPrint("[RentalBanner] show_privacy_screen invoke FAILED: $e\n$st");
+          }
         }
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
@@ -872,10 +887,13 @@ class ServerModel with ChangeNotifier {
       if (desktopType == DesktopType.cm && _clients.isEmpty) {
         hideCmWindow();
       }
-      // Убираем баннер если больше нет активных клиентов
+      // Убираем штору если больше нет активных клиентов
       if (isAndroid) {
         final hasActiveClients = _clients.any((c) => c.authorized && !c.disconnected);
+        debugPrint("[RentalBanner] onClientRemove: hasActiveClients=$hasActiveClients "
+            "remaining=${_clients.length}");
         if (!hasActiveClients) {
+          debugPrint("[RentalBanner] -> invoking hide_privacy_screen");
           parent.target?.invokeMethod("hide_privacy_screen");
         }
       }

@@ -608,21 +608,27 @@ class MainService : Service() {
      * синхронно с появлением/скрытием приватного overlay.
      */
     fun recreateVirtualDisplay() {
+        Log.i("RentalBanner", "[MainService] recreateVirtualDisplay entry: " +
+                "mp=${mediaProjection != null} surface=${surface != null} " +
+                "vd=${virtualDisplay != null} bannerShowing=${RentalBannerService.isShowing}")
         val mp = mediaProjection ?: run {
-            Log.d(logTag, "recreateVirtualDisplay: mediaProjection is null, skip")
+            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: mediaProjection is null, SKIP — " +
+                    "штора будет видна в стриме у админа, если setSkipScreenshot не сработал")
             return
         }
         val s = surface ?: run {
-            Log.d(logTag, "recreateVirtualDisplay: surface is null, skip")
+            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: surface is null, SKIP")
             return
         }
         try {
             virtualDisplay?.release()
             virtualDisplay = null
             createOrSetVirtualDisplay(mp, s)
-            Log.d(logTag, "VirtualDisplay recreated, privacyOverlay=${RentalBannerService.isShowing}")
+            Log.i("RentalBanner", "[MainService] VirtualDisplay recreated, " +
+                    "privacyOverlay=${RentalBannerService.isShowing} " +
+                    "(OWN_CONTENT_ONLY=${RentalBannerService.isShowing})")
         } catch (e: Exception) {
-            Log.e(logTag, "recreateVirtualDisplay failed: ${e.message}")
+            Log.e("RentalBanner", "[MainService] recreateVirtualDisplay FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
 

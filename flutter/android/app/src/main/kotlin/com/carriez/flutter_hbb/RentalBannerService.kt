@@ -42,6 +42,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 class RentalBannerService : Service() {
 
@@ -60,29 +61,42 @@ class RentalBannerService : Service() {
          * не давать сессии начаться).
          */
         fun show(context: Context): Boolean {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                !android.provider.Settings.canDrawOverlays(context)) {
-                Log.e(TAG, "show() FAILED — SYSTEM_ALERT_WINDOW not granted")
-                Log.e(TAG, "Fix: Settings → Apps → RustDesk → Display over other apps → Allow")
-                return false
+            Log.i(TAG, "show() entry, sdk=${Build.VERSION.SDK_INT}, isShowing=$isShowing")
+            toastUi(context, "RentalBanner: show() called")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val canDraw = android.provider.Settings.canDrawOverlays(context)
+                Log.i(TAG, "show() canDrawOverlays=$canDraw")
+                if (!canDraw) {
+                    Log.e(TAG, "show() FAILED — SYSTEM_ALERT_WINDOW NOT GRANTED")
+                    Log.e(TAG, "Fix: Settings → Apps → RustDesk → Display over other apps → Allow")
+                    toastUi(context, "RentalBanner ERROR: overlay-permission NOT granted")
+                    return false
+                }
             }
             val intent = Intent(context, RentalBannerService::class.java).apply {
                 action = ACTION_SHOW
             }
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Log.i(TAG, "show() calling startForegroundService()")
                     context.startForegroundService(intent)
                 } else {
+                    Log.i(TAG, "show() calling startService() (pre-O)")
                     context.startService(intent)
                 }
+                Log.i(TAG, "show() startService returned cleanly")
             } catch (e: Exception) {
-                Log.e(TAG, "show() startForegroundService failed: ${e.message}")
+                Log.e(TAG, "show() startForegroundService THREW: ${e.javaClass.simpleName}: ${e.message}", e)
+                toastUi(context, "RentalBanner ERROR: startService failed: ${e.message}")
                 return false
             }
             return true
         }
 
         fun hide(context: Context) {
+            Log.i(TAG, "hide() entry, isShowing=$isShowing")
+            toastUi(context, "RentalBanner: hide() called")
             try {
                 context.startService(
                     Intent(context, RentalBannerService::class.java).apply {
@@ -92,6 +106,15 @@ class RentalBannerService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "hide() startService failed (likely OK if not running): ${e.message}")
             }
+        }
+
+        /** Toast в UI-thread — пользователь видит, что что-то происходит, без logcat. */
+        private fun toastUi(context: Context, msg: String) {
+            try {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show()
+                }
+            } catch (_: Exception) { /* ignore — toast — best-effort диагностика */ }
         }
     }
 
@@ -103,11 +126,18 @@ class RentalBannerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "onStartCommand action=${intent?.action} flags=$flags startId=$startId")
         when (intent?.action) {
             ACTION_SHOW -> showOverlay()
             ACTION_HIDE -> { hideOverlay(); stopSelf() }
+            else -> Log.w(TAG, "onStartCommand: unknown action=${intent?.action}")
         }
         return START_NOT_STICKY
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(TAG, "Service onCreate")
     }
 
     override fun onDestroy() {
@@ -121,9 +151,16 @@ class RentalBannerService : Service() {
     // -----------------------------------------------------------------------
 
     private fun showOverlay() {
+        Log.i(TAG, "showOverlay() entry, overlayView=${overlayView != null}")
         // startForeground обязателен в течение 5 секунд после
         // startForegroundService() — иначе ANR (ForegroundServiceDidNotStartInTimeException).
-        startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+            Log.i(TAG, "showOverlay: startForeground OK")
+        } catch (e: Exception) {
+            Log.e(TAG, "showOverlay: startForeground FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
+            // Не возвращаемся — попробуем хотя бы добавить view, может OEM позволит
+        }
 
         if (overlayView != null) {
             Log.d(TAG, "showOverlay: already shown, skip")
@@ -174,13 +211,22 @@ class RentalBannerService : Service() {
         // взаимодействовать с экраном во время сессии админа.
         view.setOnTouchListener { _, _ -> true }
 
+        Log.i(TAG, "showOverlay: about to addView wm=$windowManager type=$type flags=0x${flags.toString(16)}")
         try {
             windowManager?.addView(view, params)
             overlayView = view
             isShowing = true
-            Log.i(TAG, "Privacy overlay shown")
+            Log.i(TAG, "✅ Privacy overlay ADDED to WindowManager — should be visible now")
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(applicationContext, "RentalBanner: overlay shown", Toast.LENGTH_LONG).show()
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "showOverlay addView failed: ${e.message}", e)
+            Log.e(TAG, "❌ showOverlay addView FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(applicationContext,
+                    "RentalBanner ERROR: addView failed: ${e.message}",
+                    Toast.LENGTH_LONG).show()
+            }
             return
         }
 
@@ -188,17 +234,22 @@ class RentalBannerService : Service() {
         // 1) пометить Surface как skipScreenshot (API 30+, reflection)
         applySkipScreenshot(view)
         // 2) пересоздать VirtualDisplay с OWN_CONTENT_ONLY
+        val mainSvc = MainService.instance
+        Log.i(TAG, "showOverlay: MainService.instance=${mainSvc != null}")
         try {
-            MainService.instance?.recreateVirtualDisplay()
+            mainSvc?.recreateVirtualDisplay()
         } catch (e: Exception) {
             Log.w(TAG, "recreateVirtualDisplay failed: ${e.message}")
         }
     }
 
     private fun hideOverlay() {
+        Log.i(TAG, "hideOverlay() entry, overlayView=${overlayView != null}")
         overlayView?.let {
-            try { windowManager?.removeView(it) }
-            catch (e: Exception) { Log.e(TAG, "hideOverlay removeView: ${e.message}") }
+            try {
+                windowManager?.removeView(it)
+                Log.i(TAG, "hideOverlay: removeView OK")
+            } catch (e: Exception) { Log.e(TAG, "hideOverlay removeView FAILED: ${e.message}") }
         }
         overlayView = null
         isShowing = false

@@ -21,13 +21,19 @@ jobs:
     - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: false
+        # Aggressive cleanup. GitHub ubuntu-24.04 runners ship with ~14 GB free
+        # on /; the Universal APK pulls vcpkg (libvpx/libyuv/libaom/opus) for
+        # arm64 + armv7, NDK, Flutter SDK, and Rust target dirs, easily 18+ GB
+        # combined. Without tool-cache/large-packages/swap reclamation we hit
+        # "No space left on device" during the Flutter build APK step.
+        # Keep `android: false` — we NEED the Android SDK.
+        tool-cache: true
         android: false
         dotnet: true
         haskell: true
-        large-packages: false
+        large-packages: true
         docker-images: true
-        swap-storage: false
+        swap-storage: true
 
     - name: Export GitHub Actions cache environment variables
       uses: actions/github-script@v6

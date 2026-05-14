@@ -109,12 +109,21 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
-        <!-- RentalBannerService: баннер «ИДЁТ АРЕНДА» сверху экрана во время сеанса -->
+        <!-- RentalBannerService: полноэкранная штора «ИДЁТ АРЕНДА» во время сеанса.
+             Скрывает содержимое экрана от сотрудника, держащего телефон;
+             в MediaProjection-стрим (для админа) штора не попадает — см.
+             RentalBannerService.applySkipScreenshot + MainService.recreateVirtualDisplay. -->
         <service
             android:name=".RentalBannerService"
             android:foregroundServiceType="specialUse"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false">
+            <!-- Требуется при targetSdk >= 34 для FGS type=specialUse.
+                 Включаем заранее, чтобы при будущем апгрейде SDK не сломалось. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="rental_privacy_overlay" />
+        </service>
 
         <!--
  Don't delete the meta-data below.

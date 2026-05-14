@@ -409,8 +409,10 @@ class MainActivity : FlutterActivity() {
                     result.success("")
                 }
                 "show_privacy_screen" -> {
-                    RentalBannerService.show(this)
-                    result.success(null)
+                    // true → штора запущена; false → SYSTEM_ALERT_WINDOW не выдан
+                    // или startForegroundService упал. Сторона Dart может показать UI-предупреждение.
+                    val ok = RentalBannerService.show(this)
+                    result.success(ok)
                 }
                 "hide_privacy_screen" -> {
                     RentalBannerService.hide(this)

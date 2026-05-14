@@ -31,6 +31,7 @@ import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 import android.hardware.display.VirtualDisplay
 import android.media.*
 import android.media.projection.MediaProjection
@@ -576,12 +577,20 @@ class MainService : Service() {
                 it.resize(SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi)
                 it.setSurface(s)
             } ?: let {
-                // AUTO_MIRROR — зеркалирует физический экран включая overlay-баннер
-                // «ИДЁТ АРЕНДА», чтобы арендатор тоже его видел.
+                // AUTO_MIRROR        — зеркалирует физический экран (включая overlay-окна).
+                // OWN_CONTENT_ONLY   — исключает чужие overlay-окна (TYPE_APPLICATION_OVERLAY)
+                //                      из этого VirtualDisplay. Используется, когда активна
+                //                      приватная штора (RentalBannerService): сотрудник видит
+                //                      штору, админ через MediaProjection видит чистый экран.
+                val flags = if (RentalBannerService.isShowing) {
+                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                } else {
+                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+                }
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
                     SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi,
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    flags,
                     s, null, null
                 )
             }
@@ -589,6 +598,31 @@ class MainService : Service() {
             Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");
             // This initiates a prompt dialog for the user to confirm screen projection.
             requestMediaProjection()
+        }
+    }
+
+    /**
+     * Пересоздаёт VirtualDisplay с актуальными флагами.
+     * Вызывается из RentalBannerService при show/hide шторы — чтобы
+     * флаг VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY включался/выключался
+     * синхронно с появлением/скрытием приватного overlay.
+     */
+    fun recreateVirtualDisplay() {
+        val mp = mediaProjection ?: run {
+            Log.d(logTag, "recreateVirtualDisplay: mediaProjection is null, skip")
+            return
+        }
+        val s = surface ?: run {
+            Log.d(logTag, "recreateVirtualDisplay: surface is null, skip")
+            return
+        }
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            createOrSetVirtualDisplay(mp, s)
+            Log.d(logTag, "VirtualDisplay recreated, privacyOverlay=${RentalBannerService.isShowing}")
+        } catch (e: Exception) {
+            Log.e(logTag, "recreateVirtualDisplay failed: ${e.message}")
         }
     }
 

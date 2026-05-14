@@ -376,7 +376,6 @@ class _PermissionCheckerState extends State<PermissionChecker> {
     if (serverModel.captureMethod != _captureMethod && !_captureMethodLoading) {
       _captureMethod = serverModel.captureMethod;
     }
-    final hasAudioPermission = androidVersion >= 30;
     return PaddingCard(
         title: translate("Permissions"),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -411,17 +410,9 @@ class _PermissionCheckerState extends State<PermissionChecker> {
                   serverModel.toggleInput),
           PermissionRow(translate("Transfer file"), serverModel.fileOk,
               serverModel.toggleFile),
-          hasAudioPermission
-              ? PermissionRow(translate("Audio Capture"), serverModel.audioOk,
-                  serverModel.toggleAudio)
-              : Row(children: [
-                  Icon(Icons.info_outline).marginOnly(right: 15),
-                  Expanded(
-                      child: Text(
-                    translate("android_version_audio_tip"),
-                    style: const TextStyle(color: MyTheme.darkGray),
-                  ))
-                ]),
+          // Audio Capture row removed: rental fleet build has RECORD_AUDIO
+          // stripped from the manifest. No row, no Android-version tip — the
+          // feature simply doesn't exist for this build.
           PermissionRow(translate("Enable clipboard"), serverModel.clipboardOk,
               serverModel.toggleClipboard),
         ]));

@@ -460,14 +460,11 @@ class MainService : Service() {
             startRawVideoRecorder(mediaProjection!!)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!audioRecordHandle.createAudioRecorder(false, mediaProjection)) {
-                Log.d(logTag, "createAudioRecorder fail")
-            } else {
-                Log.d(logTag, "audio recorder start")
-                audioRecordHandle.startAudioRecorder()
-            }
-        }
+        // Audio capture intentionally disabled for the rental fleet build. The
+        // RECORD_AUDIO permission has been stripped from the manifest, so any
+        // attempt to construct AudioRecord would fail at the OS layer anyway.
+        // Skip the call entirely to avoid log noise on every session start.
+        Log.d(logTag, "audio recorder disabled (rental build)")
         checkMediaPermission()
         _isStart = true
         FFI.setFrameRawEnable("video",true)

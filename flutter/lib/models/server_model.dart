@@ -238,28 +238,15 @@ class ServerModel with ChangeNotifier {
 
   /// 1. check android permission
   /// 2. check config
-  /// audio true by default (if permission on) (false default < Android 10)
+  /// audio: permanently OFF (RECORD_AUDIO permission removed from manifest)
   /// file true by default (if permission on)
   checkAndroidPermission() async {
-    // audio
-    // Default OFF for rental scenarios: every byte counts on a mobile uplink,
-    // and renters almost never want phone-side audio. User can still flip it
-    // on via the toggle in InputService notification — opt-in, not opt-out.
-    // We achieve "default OFF" by persisting 'N' on first launch (when the
-    // option is empty); afterwards the standard option2bool semantics apply.
-    if (androidVersion < 30 ||
-        !await AndroidPermissionManager.check(kRecordAudio)) {
-      _audioOk = false;
-      bind.mainSetOption(key: kOptionEnableAudio, value: "N");
-    } else {
-      var audioOption = await bind.mainGetOption(key: kOptionEnableAudio);
-      if (audioOption.isEmpty) {
-        // First-launch default: OFF for Android hosts (was ON in upstream).
-        await bind.mainSetOption(key: kOptionEnableAudio, value: "N");
-        audioOption = "N";
-      }
-      _audioOk = audioOption != 'N';
-    }
+    // Audio capture is permanently disabled in the rental fleet build.
+    // RECORD_AUDIO was removed from AndroidManifest.xml, MainService skips
+    // AudioRecord init, and the toggle in the UI is hidden. Force the option
+    // to 'N' on every launch so any stale 'Y' from older installs gets cleared.
+    _audioOk = false;
+    await bind.mainSetOption(key: kOptionEnableAudio, value: "N");
 
     // file
     if (!await AndroidPermissionManager.check(kManageExternalStorage)) {
@@ -349,20 +336,11 @@ class ServerModel with ChangeNotifier {
   }
 
   toggleAudio() async {
-    if (clients.isNotEmpty) {
-      await showClientsMayNotBeChangedAlert(parent.target);
-    }
-    if (!_audioOk && !await AndroidPermissionManager.check(kRecordAudio)) {
-      final res = await AndroidPermissionManager.request(kRecordAudio);
-      if (!res) {
-        showToast(translate('Failed'));
-        return;
-      }
-    }
-
-    _audioOk = !_audioOk;
-    bind.mainSetOption(
-        key: kOptionEnableAudio, value: _audioOk ? defaultOptionYes : 'N');
+    // Audio capture permanently disabled (RECORD_AUDIO not in manifest).
+    // Keep the function as a no-op so any stale UI/MethodChannel callers
+    // don't crash; force-persist 'N' for good measure.
+    _audioOk = false;
+    await bind.mainSetOption(key: kOptionEnableAudio, value: 'N');
     notifyListeners();
   }
 

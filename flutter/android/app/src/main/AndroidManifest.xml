@@ -13,7 +13,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- RECORD_AUDIO removed for rental fleet: phone-side mic capture is never
+         used by the renter flow, and keeping the permission triggers an extra
+         consent dialog on first launch / Android 14 mic indicator on every
+         session. Audio paths in AudioRecordHandle/MainService gracefully fail
+         when permission is absent (checkSelfPermission -> DENIED). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

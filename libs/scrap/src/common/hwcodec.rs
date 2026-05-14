@@ -255,11 +255,26 @@ impl HwRamEncoder {
     }
 
     fn rate_control(_config: &HwRamEncoderConfig) -> RateControl {
-        // CBR everywhere by default. On a mobile uplink VBR lets the encoder
-        // burst above the negotiated target on busy frames; that burst sits
-        // in the cellular tower's queue and shows up as a 200-500ms latency
-        // spike on the next frame. CBR keeps the rate flat and predictable —
-        // ABR is the right place to react to network changes, not the encoder.
+        // VBR for Android MediaCodec, CBR elsewhere.
+        //
+        // We tried CBR here (commit 6ca36c8) hoping to keep mobile-uplink bursts
+        // flat. Reality: Samsung Exynos OMX-based encoders (OMX.Exynos.AVC.Encoder /
+        // OMX.Exynos.HEVC.Encoder, found on every device in the fleet) initialize
+        // with CBR without error, then silently stop producing output buffers —
+        // the codec stalls and the renter sees a frozen first frame.
+        //
+        // FFmpeg waits on dequeueOutputBuffer with no errors visible upstream,
+        // hence no SWITCH or encoder.disable() fires. Symptom: one frame appears
+        // (or none), then nothing for the rest of the session.
+        //
+        // The bursting-into-tower-queue concern that motivated CBR is already
+        // largely addressed by ANDROID_HOST_MAX_BITRATE_KBPS_DEFAULT (3000 kbps
+        // cap) — within that ceiling, VBR variation is small enough not to
+        // matter on a typical 4G/5G uplink.
+        #[cfg(target_os = "android")]
+        if _config.name.contains("mediacodec") {
+            return RC_VBR;
+        }
         RC_CBR
     }
 

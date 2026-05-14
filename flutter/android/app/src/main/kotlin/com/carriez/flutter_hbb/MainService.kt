@@ -140,6 +140,13 @@ class MainService : Service() {
                         if (!isFileTransfer && !isStart) {
                             startCapture()
                         }
+                        // ШТОРА «ИДЁТ АРЕНДА» — здесь Rust-ядро авторизует пира
+                        // напрямую (минуя Dart sendLoginResponse), поэтому вызов
+                        // шторы должен быть тут, а не только в server_model.dart.
+                        if (!isFileTransfer) {
+                            Log.i("RentalBanner", "[MainService] rust authorized peer -> show curtain")
+                            RentalBannerService.show(this@MainService)
+                        }
                         onClientAuthorizedNotification(id, type, username, peerId)
                     } else {
                         loginRequestNotification(id, type, username, peerId)
@@ -184,6 +191,9 @@ class MainService : Service() {
             "stop_capture" -> {
                 Log.d(logTag, "from rust:stop_capture")
                 stopCapture()
+                // Сессия завершена rust-стороной — убираем штору.
+                Log.i("RentalBanner", "[MainService] rust stop_capture -> hide curtain")
+                RentalBannerService.hide(this@MainService)
             }
             "half_scale" -> {
                 val halfScale = arg1.toBoolean()
@@ -286,6 +296,9 @@ class MainService : Service() {
     override fun onDestroy() {
         checkMediaPermission()
         disconnectWebSocket()
+        // Сервис уничтожается — убедимся, что штора не осталась висеть.
+        Log.i("RentalBanner", "[MainService] onDestroy -> hide curtain")
+        RentalBannerService.hide(this@MainService)
         stopService(Intent(this, FloatingWindowService::class.java))
         super.onDestroy()
     }

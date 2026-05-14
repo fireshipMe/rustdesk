@@ -47,12 +47,18 @@ class FloatingWindowService : Service(), View.OnTouchListener {
     companion object {
         private val logTag = "floatingService"
         private var firstCreate = true
-        private var viewWidth = 120
-        private var viewHeight = 120
+        // Defaults tuned for rental fleet: keep the overlay alive so Android does
+        // not kill the service, but make it invisible (transparency=0) and non-
+        // clickable (untouchable=true) so it never shows up to the renter. Size
+        // pinned to MIN_VIEW_SIZE because authors warn size=0 doesn't help
+        // anti-kill. Local options (`floating-window-size`, `-transparency`,
+        // `-untouchable`) still override these per-device if needed.
+        private var viewWidth = 32       // was 120; minimum that still keeps service alive
+        private var viewHeight = 32      // was 120
         private const val MIN_VIEW_SIZE = 32 // size 0 does not help prevent the service from being killed
         private const val MAX_VIEW_SIZE = 320
-        private var viewUntouchable = false
-        private var viewTransparency = 1f // 0 means invisible but can help prevent the service from being killed
+        private var viewUntouchable = true   // was false; invisible button must not steal taps
+        private var viewTransparency = 0f    // was 1f; 0 = invisible but service still protected
         private var customSvg = ""
         private var lastLayoutX = 0
         private var lastLayoutY = 0

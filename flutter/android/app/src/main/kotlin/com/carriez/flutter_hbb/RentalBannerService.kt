@@ -245,6 +245,7 @@ class RentalBannerService : Service() {
 
     private fun hideOverlay() {
         Log.i(TAG, "hideOverlay() entry, overlayView=${overlayView != null}")
+        val hadOverlay = overlayView != null
         overlayView?.let {
             try {
                 windowManager?.removeView(it)
@@ -254,11 +255,19 @@ class RentalBannerService : Service() {
         overlayView = null
         isShowing = false
         Log.i(TAG, "Privacy overlay hidden")
-        // Вернуть VirtualDisplay в обычный AUTO_MIRROR (без OWN_CONTENT_ONLY).
-        try {
-            MainService.instance?.recreateVirtualDisplay()
-        } catch (e: Exception) {
-            Log.w(TAG, "recreateVirtualDisplay (hide path) failed: ${e.message}")
+        // Пересоздаём VirtualDisplay только если штора реально была показана —
+        // иначе ничего не изменилось во флагах VD, а лишний recreate в момент
+        // завершения сессии может создать zombie VD на освобождённом surface
+        // (MainService.stopCapture отпускает surface), который удерживает
+        // PowerManager и не даёт устройству нормально уснуть.
+        if (hadOverlay) {
+            try {
+                MainService.instance?.recreateVirtualDisplay()
+            } catch (e: Exception) {
+                Log.w(TAG, "recreateVirtualDisplay (hide path) failed: ${e.message}")
+            }
+        } else {
+            Log.i(TAG, "hideOverlay: overlay wasn't shown, skip recreateVirtualDisplay")
         }
     }
 

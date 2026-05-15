@@ -518,6 +518,14 @@ class MainService : Service() {
         // suface needs to be release after `imageReader.close()` to imageReader access released surface
         // https://github.com/rustdesk/rustdesk/issues/4118#issuecomment-1515666629
         surface?.release()
+        // ВАЖНО: занулить ссылку. Без этого recreateVirtualDisplay()
+        // (вызываемый из RentalBannerService.hideOverlay при завершении сессии)
+        // увидит surface != null, использует уже освобождённый Surface,
+        // и создаст zombie VirtualDisplay, который не отпускается до
+        // force-stop приложения. PowerManager в результате не может
+        // нормально усыпить устройство → Dozing с Interactive=false →
+        // экран не пробуждается power-кнопкой.
+        surface = null
 
         // release audio
         _isAudioStart = false
@@ -622,11 +630,18 @@ class MainService : Service() {
      */
     fun recreateVirtualDisplay() {
         Log.i("RentalBanner", "[MainService] recreateVirtualDisplay entry: " +
-                "mp=${mediaProjection != null} surface=${surface != null} " +
+                "isStart=$_isStart mp=${mediaProjection != null} surface=${surface != null} " +
                 "vd=${virtualDisplay != null} bannerShowing=${RentalBannerService.isShowing}")
+        // Главный guard: если capture не активен — не пересоздаём VD.
+        // Иначе на старом surface создадим zombie VirtualDisplay,
+        // который никогда не освободится и удержит PowerManager
+        // в странном состоянии (см. surface=null в stopCapture).
+        if (!_isStart) {
+            Log.i("RentalBanner", "[MainService] recreateVirtualDisplay: capture inactive, SKIP")
+            return
+        }
         val mp = mediaProjection ?: run {
-            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: mediaProjection is null, SKIP — " +
-                    "штора будет видна в стриме у админа, если setSkipScreenshot не сработал")
+            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: mediaProjection is null, SKIP")
             return
         }
         val s = surface ?: run {

@@ -152,10 +152,26 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         if (viewUntouchable || viewTransparency == 0f) {
             flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
+
+        // Тип окна. Если accessibility-сервис (InputService) жив — добавляем
+        // окно как TYPE_ACCESSIBILITY_OVERLAY: это доверенный overlay, и
+        // система НЕ помечает экран под ним как «obscured». Без этого
+        // плавающая кнопка (обычный TYPE_APPLICATION_OVERLAY) триггерит
+        // в Google Play ошибку «another app is blocking access» и заставляет
+        // системные диалоги фильтровать инжектированные касания.
+        // TYPE_ACCESSIBILITY_OVERLAY можно добавить только через WindowManager
+        // accessibility-сервиса, поэтому addView идёт через него.
+        val acc = InputService.ctx
+        val type = when {
+            acc != null -> WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ->
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else -> @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        }
         layoutParams = WindowManager.LayoutParams(
             viewWidth / 2,
             viewHeight,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            type,
             flags,
             PixelFormat.TRANSLUCENT
         )
@@ -173,7 +189,16 @@ class FloatingWindowService : Service(), View.OnTouchListener {
         Log.d(logTag, "keepScreenOn option: $keepScreenOnOption, value: $keepScreenOn")
         updateKeepScreenOnLayoutParams()
 
-        windowManager.addView(floatingView, layoutParams)
+        // addView должен идти через WindowManager accessibility-сервиса, иначе
+        // окно TYPE_ACCESSIBILITY_OVERLAY не примут. updateViewLayout/removeView
+        // дальше работают с любого WindowManager (WindowManagerGlobal —
+        // process-singleton), поэтому поле windowManager менять не нужно.
+        val addWm = if (acc != null)
+            acc.getSystemService(WINDOW_SERVICE) as WindowManager
+        else
+            windowManager
+        Log.d(logTag, "floating window addView via ${if (acc != null) "accessibility (TYPE_ACCESSIBILITY_OVERLAY)" else "self (TYPE_APPLICATION_OVERLAY)"}")
+        addWm.addView(floatingView, layoutParams)
         moveToScreenSide()
     }
 

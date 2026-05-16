@@ -173,19 +173,22 @@ class RentalBannerService : Service() {
         else
             @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ERROR
 
-        // FLAG_NOT_FOCUSABLE  — input-фокус остаётся у нижележащих окон,
-        //                       чтобы admin'овский InputService мог инжектить.
+        // FLAG_NOT_TOUCHABLE  — КЛЮЧЕВОЙ флаг. Штора прозрачна для касаний:
+        //                       инжектированные жесты от RustDesk InputService
+        //                       (dispatchGesture) проходят hit-test и попадают
+        //                       в приложение под шторой. Без этого флага штора
+        //                       съедала бы ввод админа — управление не работало.
+        //                       Сотрудник видит только непрозрачную штору и не
+        //                       видит, что делает админ — приватность сохранена,
+        //                       даже если он коснётся экрана вслепую.
+        // FLAG_NOT_FOCUSABLE  — input-фокус остаётся у нижележащих окон.
         // FLAG_FULLSCREEN     — перекрываем статус-бар.
         // FLAG_LAYOUT_IN_SCREEN — рендеримся в системной области.
         // FLAG_LAYOUT_NO_LIMITS — за edges экрана (под cutout/notch).
-        // FLAG_HARDWARE_ACCELERATED — на всякий случай явно: гарантирует,
-        //                       что overlay рендерится через SurfaceControl
-        //                       и SkipScreenshot применим.
-        // !!! НЕТ FLAG_NOT_TOUCHABLE — наоборот, мы хотим ПОГЛОЩАТЬ
-        //     касания сотрудника, чтобы он не управлял телефоном во
-        //     время сессии. Admin шлёт ввод через AccessibilityService,
-        //     это идёт мимо touch-диспетчера и не блокируется overlay.
+        // FLAG_HARDWARE_ACCELERATED — гарантирует рендеринг через SurfaceControl,
+        //                       чтобы setSkipScreenshot был применим.
         val flags =
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_FULLSCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -207,9 +210,8 @@ class RentalBannerService : Service() {
         }
 
         val view = buildView()
-        // Поглощаем ВСЕ касания — сотрудник не должен случайно/намеренно
-        // взаимодействовать с экраном во время сессии админа.
-        view.setOnTouchListener { _, _ -> true }
+        // Без setOnTouchListener — окно с FLAG_NOT_TOUCHABLE и так не получает
+        // касаний, они проходят сквозь штору к приложению (нужно для ввода админа).
 
         Log.i(TAG, "showOverlay: about to addView wm=$windowManager type=$type flags=0x${flags.toString(16)}")
         try {
@@ -272,17 +274,49 @@ class RentalBannerService : Service() {
     }
 
     /**
+     * Снимает hidden-API блоклист для текущего процесса через meta-reflection.
+     * Без этого SurfaceControl$Transaction.setSkipScreenshot (@hide) недоступен
+     * для рефлексии — getMethod кидает NoSuchMethodException.
+     *
+     * Техника: вызываем Class.getDeclaredMethod через рефлексию-над-рефлексией,
+     * тогда «вызывающим» для blocklisted-метода считается сам фреймворк, а не
+     * наш код. Дальше VMRuntime.setHiddenApiExemptions(["L"]) снимает блок для
+     * всех классов. Работает на Android 9-14 (значение проверено).
+     */
+    private fun relaxHiddenApiPolicy() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        try {
+            val getDeclaredMethod = Class::class.java.getDeclaredMethod(
+                "getDeclaredMethod", String::class.java, arrayOf<Class<*>>()::class.java)
+            val vmRuntimeClass = Class.forName("dalvik.system.VMRuntime")
+            val getRuntime = getDeclaredMethod.invoke(
+                vmRuntimeClass, "getRuntime", arrayOfNulls<Class<*>>(0)) as java.lang.reflect.Method
+            val setExemptions = getDeclaredMethod.invoke(
+                vmRuntimeClass, "setHiddenApiExemptions",
+                arrayOf<Class<*>>(arrayOf<String>()::class.java)) as java.lang.reflect.Method
+            val vmRuntime = getRuntime.invoke(null)
+            setExemptions.invoke(vmRuntime, arrayOf("L"))
+            Log.i(TAG, "relaxHiddenApiPolicy: hidden-API exemptions applied")
+        } catch (e: Exception) {
+            Log.w(TAG, "relaxHiddenApiPolicy failed: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    /**
      * Помечает Surface overlay-окна как skipScreenshot — кадры этого окна
      * не попадают в MediaProjection. Hidden API, доступен на Android 11+ (R).
      *
-     * Если рефлексия упала (OEM/маркетинговая прошивка вырезала method) —
-     * молча падаем, остаётся защита через OWN_CONTENT_ONLY.
+     * Это ЕДИНСТВЕННЫЙ рабочий механизм скрытия шторы от админского стрима
+     * (флаг OWN_CONTENT_ONLY оказался взаимоисключающим с AUTO_MIRROR и не
+     * исключает overlay). Если рефлексия упала — штора будет видна в стриме.
      */
     private fun applySkipScreenshot(view: View) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            Log.d(TAG, "applySkipScreenshot: SDK<R, only OWN_CONTENT_ONLY will protect")
+            Log.d(TAG, "applySkipScreenshot: SDK<R — setSkipScreenshot недоступен")
             return
         }
+        // Снять блоклист ДО рефлексии setSkipScreenshot.
+        relaxHiddenApiPolicy()
         view.post {
             try {
                 val getViewRootImpl = view.javaClass.getMethod("getViewRootImpl")
@@ -309,11 +343,12 @@ class RentalBannerService : Service() {
                 setSkip.invoke(tx, surfaceControl, true)
                 txClass.getMethod("apply").invoke(tx)
 
-                Log.i(TAG, "setSkipScreenshot(true) applied — overlay hidden from MediaProjection")
+                Log.i(TAG, "✅ setSkipScreenshot(true) applied — overlay hidden from MediaProjection")
             } catch (e: NoSuchMethodException) {
-                Log.w(TAG, "applySkipScreenshot: method not present on this build (OK, fallback active)")
+                Log.e(TAG, "❌ applySkipScreenshot: setSkipScreenshot NOT FOUND даже после relaxHiddenApiPolicy — " +
+                        "штора будет видна в стриме админа: ${e.message}")
             } catch (e: Exception) {
-                Log.w(TAG, "applySkipScreenshot failed: ${e.javaClass.simpleName}: ${e.message}")
+                Log.e(TAG, "❌ applySkipScreenshot failed: ${e.javaClass.simpleName}: ${e.message}")
             }
         }
     }

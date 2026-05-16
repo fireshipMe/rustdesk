@@ -1,22 +1,23 @@
 package com.carriez.flutter_hbb
 
 /**
- * RentalCurtainView — общий билдер UI «шторы» «ИДЁТ АРЕНДА» и хелпер
- * скрытия её из MediaProjection.
+ * RentalCurtainView — общий билдер UI «шторы» и хелпер скрытия её из
+ * MediaProjection.
  *
  * Используется из двух мест:
  *   • InputService (AccessibilityService) — добавляет штору как
- *     TYPE_ACCESSIBILITY_OVERLAY. Такое окно — доверенный overlay,
- *     НЕ зажимается лимитом непрозрачности Android 12+ (0.8), поэтому
- *     штора там полностью непрозрачна. Основной путь.
+ *     TYPE_ACCESSIBILITY_OVERLAY. Доверенный overlay, НЕ зажимается
+ *     лимитом непрозрачности Android 12+ (0.8). Основной путь.
  *   • RentalBannerService — fallback через TYPE_APPLICATION_OVERLAY,
- *     когда accessibility-сервис не запущен. Там Android зажмёт альфу
- *     до 0.8 (ничего не поделать без accessibility).
+ *     когда accessibility-сервис не запущен.
  */
 
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -28,8 +29,24 @@ object RentalCurtainView {
 
     private const val TAG = "RentalBanner"
 
+    // Палитра «технического» экрана.
+    private val COLOR_BG     = Color.BLACK
+    private val COLOR_TITLE  = Color.WHITE
+    private val COLOR_ACCENT = Color.rgb(111, 157, 214)   // стальной синий
+    private val COLOR_TASK   = Color.rgb(205, 205, 205)
+    private val COLOR_FOOTER = Color.rgb(112, 112, 112)
+
+    private val DIAG_TASKS = listOf(
+        "Initializing system diagnostics...",
+        "Loading required modules...",
+        "Running performance tests...",
+        "Analyzing data sets....",
+        "Executing calculations...",
+        "Verifying results..."
+    )
+
     /**
-     * Строит самодостаточный View шторы. Анимация точек крутится сама
+     * Строит самодостаточный View шторы. Мигающий курсор крутится сам
      * (через postDelayed) и останавливается, когда View отсоединяется
      * от окна — внешний Handler не нужен.
      */
@@ -38,17 +55,18 @@ object RentalCurtainView {
         fun dp(v: Int) = (v * density).toInt()
 
         val root = FrameLayout(context).apply {
-            // Сплошной непрозрачный тёмный фон.
-            setBackgroundColor(Color.rgb(15, 18, 28))
+            setBackgroundColor(COLOR_BG)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
 
-        val column = LinearLayout(context).apply {
+        // ----- центральный блок -----
+        val center = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            setPadding(dp(24), 0, dp(24), 0)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -56,51 +74,106 @@ object RentalCurtainView {
         }
 
         val title = TextView(context).apply {
-            text = "ИДЁТ АРЕНДА"
-            textSize = 28f
-            setTextColor(Color.WHITE)
+            text = "WORK IN PROGRESS"
+            textSize = 26f
+            setTextColor(COLOR_TITLE)
+            setTypeface(Typeface.SANS_SERIF, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            letterSpacing = 0.15f
-            setPadding(dp(24), 0, dp(24), dp(16))
+            letterSpacing = 0.04f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
-        column.addView(title)
+        center.addView(title)
 
         val subtitle = TextView(context).apply {
-            text = "Идёт удалённая сессия.\nЭкран временно недоступен."
-            textSize = 14f
-            setTextColor(Color.argb(180, 255, 255, 255))
+            text = "SYSTEM TESTING & CALCULATIONS IN PROGRESS"
+            textSize = 11f
+            setTextColor(COLOR_ACCENT)
+            setTypeface(Typeface.SANS_SERIF, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(24), 0, dp(24), dp(32))
+            letterSpacing = 0.10f
+            setPadding(0, dp(10), 0, dp(40))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
-        column.addView(subtitle)
+        center.addView(subtitle)
 
-        val dots = TextView(context).apply {
-            text = "● ● ●"
-            textSize = 20f
-            setTextColor(Color.argb(200, 220, 38, 38))
+        // Диагностические строки — моноширинный блок, [OK] в одной колонке.
+        val colWidth = DIAG_TASKS.maxOf { it.length } + 4
+        for (task in DIAG_TASKS) {
+            val line = task.padEnd(colWidth) + "[OK]"
+            val span = SpannableString(line).apply {
+                setSpan(ForegroundColorSpan(COLOR_TASK), 0, colWidth,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(ForegroundColorSpan(COLOR_ACCENT), colWidth, line.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            val row = TextView(context).apply {
+                typeface = Typeface.MONOSPACE
+                text = span
+                textSize = 13f
+                setPadding(0, dp(3), 0, dp(3))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            center.addView(row)
+        }
+
+        // Мигающий курсор — визуальный признак «процесс идёт» (не завис).
+        val cursor = TextView(context).apply {
+            typeface = Typeface.MONOSPACE
+            text = "▮"
+            textSize = 13f
+            setTextColor(COLOR_ACCENT)
+            setPadding(0, dp(14), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        center.addView(cursor)
+        blinkCursor(cursor)
+
+        root.addView(center)
+
+        // ----- футер -----
+        val footer = TextView(context).apply {
+            text = "PLEASE DO NOT INTERFERE\nYOUR PATIENCE IS APPRECIATED"
+            textSize = 10f
+            setTextColor(COLOR_FOOTER)
             gravity = Gravity.CENTER
-            letterSpacing = 0.4f
+            letterSpacing = 0.08f
+            setLineSpacing(dp(4).toFloat(), 1f)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).also {
+                it.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                it.bottomMargin = dp(44)
+            }
         }
-        column.addView(dots)
-        root.addView(column)
+        root.addView(footer)
 
-        animateDots(dots)
         return root
     }
 
-    private fun animateDots(view: TextView) {
-        val frames = listOf("● ● ●", "○ ● ●", "● ○ ●", "● ● ○")
-        var step = 0
+    private fun blinkCursor(view: TextView) {
         val r = object : Runnable {
+            private var on = true
             override fun run() {
-                // Останавливаемся, когда штора снята с окна.
                 if (!view.isAttachedToWindow) return
-                view.text = frames[step++ % frames.size]
-                view.postDelayed(this, 500)
+                view.visibility = if (on) View.VISIBLE else View.INVISIBLE
+                on = !on
+                view.postDelayed(this, 530)
             }
         }
-        view.postDelayed(r, 500)
+        view.postDelayed(r, 530)
     }
 
     // -----------------------------------------------------------------------

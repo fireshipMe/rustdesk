@@ -31,7 +31,6 @@ import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 import android.hardware.display.VirtualDisplay
 import android.media.*
 import android.media.projection.MediaProjection
@@ -518,13 +517,9 @@ class MainService : Service() {
         // suface needs to be release after `imageReader.close()` to imageReader access released surface
         // https://github.com/rustdesk/rustdesk/issues/4118#issuecomment-1515666629
         surface?.release()
-        // ВАЖНО: занулить ссылку. Без этого recreateVirtualDisplay()
-        // (вызываемый из RentalBannerService.hideOverlay при завершении сессии)
-        // увидит surface != null, использует уже освобождённый Surface,
-        // и создаст zombie VirtualDisplay, который не отпускается до
-        // force-stop приложения. PowerManager в результате не может
-        // нормально усыпить устройство → Dozing с Interactive=false →
-        // экран не пробуждается power-кнопкой.
+        // ВАЖНО: занулить ссылку — иначе любой код, проверяющий surface != null,
+        // использует уже освобождённый Surface (источник zombie VirtualDisplay
+        // в прошлом). Парная защита к release() выше.
         surface = null
 
         // release audio
@@ -598,20 +593,14 @@ class MainService : Service() {
                 it.resize(SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi)
                 it.setSurface(s)
             } ?: let {
-                // AUTO_MIRROR        — зеркалирует физический экран (включая overlay-окна).
-                // OWN_CONTENT_ONLY   — исключает чужие overlay-окна (TYPE_APPLICATION_OVERLAY)
-                //                      из этого VirtualDisplay. Используется, когда активна
-                //                      приватная штора (RentalBannerService): сотрудник видит
-                //                      штору, админ через MediaProjection видит чистый экран.
-                val flags = if (RentalBannerService.isShowing) {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                } else {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-                }
+                // AUTO_MIRROR — зеркалирует физический экран. Штора скрывается
+                // из захвата на уровне SurfaceControl#setSkipScreenshot, а не
+                // через флаги VD (OWN_CONTENT_ONLY взаимоисключающ с AUTO_MIRROR
+                // и overlay не исключает — проверено).
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
                     SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi,
-                    flags,
+                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
             }
@@ -619,44 +608,6 @@ class MainService : Service() {
             Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");
             // This initiates a prompt dialog for the user to confirm screen projection.
             requestMediaProjection()
-        }
-    }
-
-    /**
-     * Пересоздаёт VirtualDisplay с актуальными флагами.
-     * Вызывается из RentalBannerService при show/hide шторы — чтобы
-     * флаг VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY включался/выключался
-     * синхронно с появлением/скрытием приватного overlay.
-     */
-    fun recreateVirtualDisplay() {
-        Log.i("RentalBanner", "[MainService] recreateVirtualDisplay entry: " +
-                "isStart=$_isStart mp=${mediaProjection != null} surface=${surface != null} " +
-                "vd=${virtualDisplay != null} bannerShowing=${RentalBannerService.isShowing}")
-        // Главный guard: если capture не активен — не пересоздаём VD.
-        // Иначе на старом surface создадим zombie VirtualDisplay,
-        // который никогда не освободится и удержит PowerManager
-        // в странном состоянии (см. surface=null в stopCapture).
-        if (!_isStart) {
-            Log.i("RentalBanner", "[MainService] recreateVirtualDisplay: capture inactive, SKIP")
-            return
-        }
-        val mp = mediaProjection ?: run {
-            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: mediaProjection is null, SKIP")
-            return
-        }
-        val s = surface ?: run {
-            Log.w("RentalBanner", "[MainService] recreateVirtualDisplay: surface is null, SKIP")
-            return
-        }
-        try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            createOrSetVirtualDisplay(mp, s)
-            Log.i("RentalBanner", "[MainService] VirtualDisplay recreated, " +
-                    "privacyOverlay=${RentalBannerService.isShowing} " +
-                    "(OWN_CONTENT_ONLY=${RentalBannerService.isShowing})")
-        } catch (e: Exception) {
-            Log.e("RentalBanner", "[MainService] recreateVirtualDisplay FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
 

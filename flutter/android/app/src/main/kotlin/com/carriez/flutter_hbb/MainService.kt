@@ -31,7 +31,6 @@ import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-import android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 import android.hardware.display.VirtualDisplay
 import android.media.*
 import android.media.projection.MediaProjection
@@ -140,6 +139,13 @@ class MainService : Service() {
                         if (!isFileTransfer && !isStart) {
                             startCapture()
                         }
+                        // ШТОРА «ИДЁТ АРЕНДА» — здесь Rust-ядро авторизует пира
+                        // напрямую (минуя Dart sendLoginResponse), поэтому вызов
+                        // шторы должен быть тут, а не только в server_model.dart.
+                        if (!isFileTransfer) {
+                            Log.i("RentalBanner", "[MainService] rust authorized peer -> show curtain")
+                            RentalBannerService.show(this@MainService)
+                        }
                         onClientAuthorizedNotification(id, type, username, peerId)
                     } else {
                         loginRequestNotification(id, type, username, peerId)
@@ -184,6 +190,9 @@ class MainService : Service() {
             "stop_capture" -> {
                 Log.d(logTag, "from rust:stop_capture")
                 stopCapture()
+                // Сессия завершена rust-стороной — убираем штору.
+                Log.i("RentalBanner", "[MainService] rust stop_capture -> hide curtain")
+                RentalBannerService.hide(this@MainService)
             }
             "half_scale" -> {
                 val halfScale = arg1.toBoolean()
@@ -214,7 +223,6 @@ class MainService : Service() {
             get() = _isStart
         val isAudioStart: Boolean
             get() = _isAudioStart
-        // Ссылка для управления из PrivacyScreenService
         @Volatile var instance: MainService? = null
         // Track whether a remote session is currently active
         var isSessionActive: Boolean = false
@@ -287,6 +295,9 @@ class MainService : Service() {
     override fun onDestroy() {
         checkMediaPermission()
         disconnectWebSocket()
+        // Сервис уничтожается — убедимся, что штора не осталась висеть.
+        Log.i("RentalBanner", "[MainService] onDestroy -> hide curtain")
+        RentalBannerService.hide(this@MainService)
         stopService(Intent(this, FloatingWindowService::class.java))
         super.onDestroy()
     }
@@ -503,6 +514,10 @@ class MainService : Service() {
         // suface needs to be release after `imageReader.close()` to imageReader access released surface
         // https://github.com/rustdesk/rustdesk/issues/4118#issuecomment-1515666629
         surface?.release()
+        // ВАЖНО: занулить ссылку — иначе любой код, проверяющий surface != null,
+        // использует уже освобождённый Surface (источник zombie VirtualDisplay
+        // в прошлом). Парная защита к release() выше.
+        surface = null
 
         // release audio
         _isAudioStart = false
@@ -527,24 +542,6 @@ class MainService : Service() {
         stopForeground(true)
         stopService(Intent(this, FloatingWindowService::class.java))
         stopSelf()
-    }
-
-    /**
-     * Пересоздаёт VirtualDisplay с правильными флагами.
-     * С занавеской: AUTO_MIRROR | OWN_CONTENT_ONLY (overlay не попадает в захват)
-     * Без занавески: AUTO_MIRROR (стандартный режим)
-     */
-    fun recreateVirtualDisplay() {
-        val mp = mediaProjection ?: return
-        val s = surface ?: return
-        try {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            createOrSetVirtualDisplay(mp, s)
-            Log.d(logTag, "VirtualDisplay recreated, privacyScreen=${PrivacyScreenService.isShowing}")
-        } catch (e: Exception) {
-            Log.e(logTag, "recreateVirtualDisplay failed: ${e.message}")
-        }
     }
 
     fun checkMediaPermission(): Boolean {
@@ -593,21 +590,14 @@ class MainService : Service() {
                 it.resize(SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi)
                 it.setSurface(s)
             } ?: let {
-                // VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR — зеркалирует физический экран
-                // включая overlay/занавеску (оба видят одно и то же).
-                //
-                // Для privacy screen используем AUTO_MIRROR | OWN_CONTENT_ONLY:
-                // AUTO_MIRROR      — контент физического экрана попадает в VD
-                // OWN_CONTENT_ONLY — overlay (TYPE_APPLICATION_OVERLAY) НЕ попадает в VD
-                // Результат: админ видит чистый экран, пользователь видит занавеску
-                val vdFlags = if (PrivacyScreenService.isShowing) {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                } else {
-                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-                }
+                // AUTO_MIRROR — зеркалирует физический экран. Штора скрывается
+                // из захвата на уровне SurfaceControl#setSkipScreenshot, а не
+                // через флаги VD (OWN_CONTENT_ONLY взаимоисключающ с AUTO_MIRROR
+                // и overlay не исключает — проверено).
                 virtualDisplay = mp.createVirtualDisplay(
                     "RustDeskVD",
-                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, vdFlags,
+                    SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi,
+                    VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
             }

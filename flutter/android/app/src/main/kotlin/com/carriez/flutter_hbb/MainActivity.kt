@@ -409,15 +409,20 @@ class MainActivity : FlutterActivity() {
                     result.success("")
                 }
                 "show_privacy_screen" -> {
-                    PrivacyScreenService.show(this)
-                    result.success(null)
+                    Log.i("RentalBanner", "[MainActivity] show_privacy_screen channel hit")
+                    // true → штора запущена; false → SYSTEM_ALERT_WINDOW не выдан
+                    // или startForegroundService упал. Сторона Dart может показать UI-предупреждение.
+                    val ok = RentalBannerService.show(this)
+                    Log.i("RentalBanner", "[MainActivity] show_privacy_screen returning ok=$ok")
+                    result.success(ok)
                 }
                 "hide_privacy_screen" -> {
-                    PrivacyScreenService.hide(this)
+                    Log.i("RentalBanner", "[MainActivity] hide_privacy_screen channel hit")
+                    RentalBannerService.hide(this)
                     result.success(null)
                 }
                 "privacy_screen_status" -> {
-                    result.success(PrivacyScreenService.isShowing)
+                    result.success(RentalBannerService.isShowing)
                 }
                 else -> result.error("-1", "No such method", null)
             }

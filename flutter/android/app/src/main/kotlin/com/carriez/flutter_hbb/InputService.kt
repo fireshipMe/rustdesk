@@ -17,6 +17,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Build
@@ -28,8 +29,10 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent as KeyEventAndroid
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup.LayoutParams
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
@@ -207,6 +210,7 @@ class InputService : AccessibilityService() {
 
     override fun onDestroy() {
         ctx = null
+        try { hideCurtain() } catch (_: Exception) {}
         try { WarmerService.stop() } catch (_: Exception) {}
         XmlCapture.stop()
         AutoClick.reset()
@@ -223,6 +227,70 @@ class InputService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    // -----------------------------------------------------------------------
+    // Приватная штора «ИДЁТ АРЕНДА» как TYPE_ACCESSIBILITY_OVERLAY.
+    //
+    // Окно accessibility-overlay — доверенный overlay: Android 12+ НЕ
+    // применяет к нему лимит непрозрачности 0.8 (анти-tapjacking), который
+    // зажимает обычные TYPE_APPLICATION_OVERLAY. Поэтому отсюда штора
+    // полностью непрозрачна, и при этом FLAG_NOT_TOUCHABLE пропускает
+    // инжектированные жесты админа насквозь.
+    // -----------------------------------------------------------------------
+
+    private var curtainView: View? = null
+    private var curtainWm: WindowManager? = null
+
+    fun showCurtain() {
+        if (curtainView != null) {
+            Log.d(logTag, "showCurtain: already shown, skip")
+            return
+        }
+        try {
+            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            val flags =
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                flags,
+                PixelFormat.OPAQUE
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                x = 0; y = 0
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+            val view = RentalCurtainView.build(this)
+            wm.addView(view, params)
+            curtainView = view
+            curtainWm = wm
+            Log.i("RentalBanner", "✅ [InputService] curtain ADDED as TYPE_ACCESSIBILITY_OVERLAY (opaque, not capped)")
+            RentalCurtainView.applySkipScreenshot(view)
+        } catch (e: Exception) {
+            Log.e("RentalBanner", "❌ [InputService] showCurtain failed: ${e.javaClass.simpleName}: ${e.message}", e)
+            curtainView = null
+        }
+    }
+
+    fun hideCurtain() {
+        curtainView?.let {
+            try {
+                curtainWm?.removeView(it)
+                Log.i("RentalBanner", "[InputService] curtain removed")
+            } catch (e: Exception) {
+                Log.e("RentalBanner", "[InputService] hideCurtain removeView failed: ${e.message}")
+            }
+        }
+        curtainView = null
+        curtainWm = null
+    }
 
     // -----------------------------------------------------------------------
     // AccessibilityEvent — делегируем в AutoClick

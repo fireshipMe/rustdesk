@@ -15,12 +15,10 @@ package com.carriez.flutter_hbb
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
-import android.os.Build
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.util.Log
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -104,47 +102,28 @@ object RentalCurtainView {
         }
         center.addView(subtitle)
 
-        // Диагностические строки — ОДИН моноширинный TextView со всеми
-        // строками. [OK] выровнен в колонку через padEnd (моноширинный шрифт).
-        // Авто-размер шрифта: строка из ~42 символов гарантированно влезает по
-        // ширине любого экрана без переноса (иначе [OK] уезжал на новую строку).
+        // Диагностические строки — моноширинный блок, [OK] в одной колонке.
         val colWidth = DIAG_TASKS.maxOf { it.length } + 4
-        val sb = StringBuilder()
-        val okRanges = ArrayList<IntRange>()
-        for ((i, task) in DIAG_TASKS.withIndex()) {
-            val lineStart = sb.length
-            sb.append(task.padEnd(colWidth)).append("[OK]")
-            okRanges.add((lineStart + colWidth) until sb.length)
-            if (i < DIAG_TASKS.size - 1) sb.append('\n')
-        }
-        val diagSpan = SpannableString(sb.toString()).apply {
-            setSpan(ForegroundColorSpan(COLOR_TASK), 0, length,
-                Spannable.SPAN_INCLUSIVE_INCLUSIVE)
-            for (r in okRanges) {
-                setSpan(ForegroundColorSpan(COLOR_ACCENT), r.first, r.last + 1,
+        for (task in DIAG_TASKS) {
+            val line = task.padEnd(colWidth) + "[OK]"
+            val span = SpannableString(line).apply {
+                setSpan(ForegroundColorSpan(COLOR_TASK), 0, colWidth,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(ForegroundColorSpan(COLOR_ACCENT), colWidth, line.length,
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-        }
-        val diag = TextView(context).apply {
-            typeface = Typeface.MONOSPACE
-            text = diagSpan
-            includeFontPadding = false
-            setLineSpacing(dp(7).toFloat(), 1f)
-            maxLines = DIAG_TASKS.size
-            // Авто-подгонка размера под ширину — все строки одинаковой длины,
-            // поэтому размер един для всех, колонка [OK] остаётся выровненной.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                setAutoSizeTextTypeUniformWithConfiguration(
-                    8, 15, 1, TypedValue.COMPLEX_UNIT_SP)
-            } else {
-                textSize = 11f
+            val row = TextView(context).apply {
+                typeface = Typeface.MONOSPACE
+                text = span
+                textSize = 13f
+                setPadding(0, dp(3), 0, dp(3))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            center.addView(row)
         }
-        center.addView(diag)
 
         // Мигающий курсор — визуальный признак «процесс идёт» (не завис).
         val cursor = TextView(context).apply {

@@ -26,9 +26,12 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent as KeyEventAndroid
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup.LayoutParams
@@ -424,10 +427,57 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     // Mouse input
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Knox privileged pointer path (Samsung): inject real MotionEvents so taps
+    // reach secure surfaces that reject AccessibilityService gestures. Returns
+    // true when the event was consumed by Knox; false -> fall through to the
+    // dispatchGesture path below. Non-Samsung / no license -> KnoxInput.ready
+    // is false and this is never entered.
+    //
+    // Only the pointer stream (down/move/up) is routed here. Wheel, back,
+    // recents, home keep using performGlobalAction / gesture scrolling, which
+    // already work on every surface.
+    // -----------------------------------------------------------------------
+    private var knoxPointerDown = false
+    private var knoxDownTime = 0L
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun handleMouseViaKnox(mask: Int, x: Int, y: Int): Boolean {
+        val sx = (x * SCREEN_INFO.scale).toFloat()
+        val sy = (y * SCREEN_INFO.scale).toFloat()
+        when (mask) {
+            LEFT_DOWN -> {
+                knoxDownTime = SystemClock.uptimeMillis()
+                if (KnoxInput.injectMotion(MotionEvent.ACTION_DOWN, sx, sy, knoxDownTime)) {
+                    knoxPointerDown = true
+                    return true
+                }
+                // Knox declined the DOWN — let the gesture path own this gesture.
+                return false
+            }
+            LEFT_MOVE, 0 -> {
+                if (!knoxPointerDown) return false
+                KnoxInput.injectMotion(MotionEvent.ACTION_MOVE, sx, sy, knoxDownTime)
+                return true
+            }
+            LEFT_UP -> {
+                if (!knoxPointerDown) return false
+                KnoxInput.injectMotion(MotionEvent.ACTION_UP, sx, sy, knoxDownTime)
+                knoxPointerDown = false
+                return true
+            }
+            else -> return false
+        }
+    }
+
     @RequiresApi(Build.VERSION_CODES.N)
     fun onMouseInput(mask: Int, _x: Int, _y: Int) {
         val x = max(0, _x)
         val y = max(0, _y)
+
+        // Samsung + Knox active: route taps/drags through privileged injection
+        // so secure surfaces (Play sign-in, permission dialogs) accept them.
+        if (KnoxInput.ready && handleMouseViaKnox(mask, x, y)) return
 
         if (mask == 0 || mask == LEFT_MOVE) {
             val oldX = mouseX

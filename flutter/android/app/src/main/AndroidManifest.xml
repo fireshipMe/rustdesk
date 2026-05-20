@@ -25,6 +25,13 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- Samsung Knox RemoteInjection: privileged input so remote taps reach
+         secure surfaces (Google Play sign-in, runtime-permission dialogs,
+         FLAG_SECURE windows) that reject AccessibilityService gestures.
+         Effective only on Samsung with an activated KPE license; harmless
+         elsewhere (KnoxInput falls back to dispatchGesture). -->
+    <uses-permission android:name="com.samsung.android.knox.permission.KNOX_REMOTE_CONTROL" />
+
     <queries>
         <intent>
             <!-- https://developer.android.com/training/package-visibility/use-cases#open-urls-custom-tabs -->
